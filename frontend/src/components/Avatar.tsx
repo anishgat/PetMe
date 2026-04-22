@@ -1,7 +1,7 @@
 import React, { useRef, useState, useCallback } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Environment, ContactShadows, useGLTF, Html } from '@react-three/drei';
-import { Lightbulb, X } from 'lucide-react';
+import { Lightbulb } from 'lucide-react';
 import * as THREE from 'three';
 
 // ─────────────────────────────────────────────────────────────
@@ -39,35 +39,40 @@ const ORGANS: OrganConfig[] = [
 // ─────────────────────────────────────────────────────────────
 
 const ThoughtBubble3D: React.FC<{ message: string }> = ({ message }) => {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   return (
-    <Html position={[0.75, 1.6, 0]} center zIndexRange={[100, 0]}>
-      <div className="pointer-events-auto select-none" style={{ minWidth: 260 }}>
+    <Html position={[1.95, 1.55, 0.25]} zIndexRange={[8, 0]}>
+      <div className="pointer-events-none select-none">
         {collapsed ? (
-          <button 
+          <button
             onClick={() => setCollapsed(false)}
-            className="w-12 h-12 bg-slate-900/40 backdrop-blur-xl border border-white/20 rounded-full flex items-center justify-center hover:bg-white/20 hover:scale-110 transition-all shadow-xl group"
+            className="pointer-events-auto w-11 h-11 bg-slate-900/55 backdrop-blur-xl border border-white/20 rounded-full flex items-center justify-center hover:bg-white/20 hover:scale-105 transition-all shadow-xl group"
+            title="Show thought bubble"
           >
-            <Lightbulb size={24} className="text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.8)] group-hover:drop-shadow-[0_0_16px_rgba(250,204,21,1)] transition-all" />
+            <Lightbulb size={20} className="text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.8)] group-hover:drop-shadow-[0_0_14px_rgba(250,204,21,1)] transition-all" />
           </button>
         ) : (
-          <div className="flex flex-col items-center animate-in zoom-in-95 duration-300">
-            {/* The main cloud/bubble */}
-            <div className="relative bg-white/10 backdrop-blur-2xl border border-white/20 shadow-2xl px-6 py-5 w-full text-center" 
-              style={{ borderRadius: '40px 40px 40px 12px' }}>
-               <button onClick={() => setCollapsed(true)} className="absolute top-2 right-3 p-1.5 rounded-full hover:bg-white/10 text-white/40 hover:text-white transition-colors">
-                 <X size={14} />
-               </button>
-               <p className="text-sm font-medium text-white/90 leading-snug tracking-wide italic mt-1">"{message}"</p>
-               <p className="text-[10px] font-bold text-white/35 mt-2.5 uppercase tracking-widest">— Future Self</p>
+          <div className="pointer-events-auto w-[220px] max-w-[32vw] min-w-[170px] animate-in zoom-in-95 duration-200">
+            <button
+              type="button"
+              onClick={() => setCollapsed(true)}
+              className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-slate-900/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-yellow-200/90 hover:bg-slate-800/70 transition-colors"
+              title="Collapse to lightbulb"
+            >
+              <Lightbulb size={12} />
+              Collapse
+            </button>
+            <div
+              className="bg-slate-900/70 backdrop-blur-xl border border-white/15 shadow-2xl px-4 py-3"
+              style={{ borderRadius: '18px 18px 18px 8px' }}
+            >
+              <p className="text-xs font-medium text-white/88 leading-snug tracking-wide italic">"{message}"</p>
+              <p className="text-[10px] font-bold text-white/35 mt-2 uppercase tracking-wider">Future Self</p>
             </div>
-            
-            {/* Thought bubbles tail pointing down-left towards avatar head */}
-            <div className="flex flex-col items-start w-full relative -left-4">
-               <div className="w-3.5 h-3.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-full mt-2 ml-4" />
-               <div className="w-2 h-2 bg-white/20 backdrop-blur-md rounded-full mt-1.5 ml-1" />
-               <div className="w-1.5 h-1.5 bg-white/30 backdrop-blur-md rounded-full mt-1.5 -ml-1" />
+            <div className="flex flex-col items-start w-full pl-3">
+              <div className="w-3 h-3 bg-slate-900/70 border border-white/15 rounded-full mt-1.5" />
+              <div className="w-1.5 h-1.5 bg-slate-900/65 rounded-full mt-1 ml-1.5" />
             </div>
           </div>
         )}
@@ -652,3 +657,4 @@ const Avatar: React.FC<AvatarProps> = ({ biologicalAge, skinTone = 'medium', bod
 
 export { ORGANS };
 export default Avatar;
+

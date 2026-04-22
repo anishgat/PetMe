@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Avatar from './components/Avatar';
 import { fetchAvatarStatus, logHabits, fetchOrganTrend, updateCustomization } from './api';
-import type { AvatarState, OrganScores, OrganTrend } from './api';
+import type { AvatarState, DailyHabits, OrganScores, OrganTrend } from './api';
 import {
   Activity, Settings, X, Heart, Wind, Zap, Brain, Droplets,
   ChevronRight, ClipboardList,
-  Moon, Footprints, Apple, Droplet, Flame, Plus, Check,
-  TrendingUp, TrendingDown, Minus, Lightbulb, BookOpen, AlertCircle
+  Plus, Check,
+  TrendingUp, TrendingDown, Minus, Lightbulb, BookOpen, AlertCircle, ChevronDown
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────
@@ -15,12 +15,15 @@ import {
 // ─────────────────────────────────────────────────────────────
 
 interface DailyLog {
-  sleep_hours: number | '';
-  water_ml: number | '';
-  steps: number | '';
-  nutrition_score: number;
-  exercise_mins: number | '';
-  mood: number;   // 1-5
+  sleepHours: number;
+  sleepQuality: 1 | 2 | 3 | 4 | 5;
+  activityType: 'walked' | 'run' | 'lifted' | 'cycled' | 'stretched' | 'swam' | 'yoga' | 'sports' | 'mostly sat';
+  activityIntensity: 'easy' | 'moderate' | 'hard';
+  activityDuration: '<10' | '10-20' | '20-30' | '30-60' | '60+';
+  dietQuality: 'rough' | 'mixed' | 'good' | 'nourishing';
+  hydration: 'low' | 'adequate' | 'high';
+  stressLevel: 1 | 2 | 3 | 4 | 5;
+  recovery: 'none' | 'small' | 'good' | 'full';
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -247,40 +250,106 @@ const OrganPanel: React.FC<{ organ: string; score: number; onClose: () => void }
 // Daily Log Panel (slide-in from left)
 // ─────────────────────────────────────────────────────────────
 
-const MOOD_LABELS = ['', '😔', '😕', '😐', '😊', '🤩'];
+const ACTIVITY_OPTIONS: DailyLog['activityType'][] = ['walked', 'run', 'lifted', 'cycled', 'stretched', 'swam', 'yoga', 'sports', 'mostly sat'];
+
+const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+const durationToMinutes: Record<DailyLog['activityDuration'], number> = {
+  '<10': 8,
+  '10-20': 15,
+  '20-30': 25,
+  '30-60': 45,
+  '60+': 70,
+};
+
+const mapDailyLogToHabits = (log: DailyLog): DailyHabits => {
+  const hydrationMap: Record<DailyLog['hydration'], number> = { low: 1200, adequate: 2200, high: 3000 };
+  const activityBoost: Record<DailyLog['activityIntensity'], number> = { easy: 0, moderate: 15, hard: 30 };
+  const stepsByDuration: Record<DailyLog['activityDuration'], number> = { '<10': 1800, '10-20': 3200, '20-30': 5200, '30-60': 7600, '60+': 9800 };
+  const dietBase: Record<DailyLog['dietQuality'], number> = { rough: 3, mixed: 5, good: 7, nourishing: 9 };
+  const recoveryLift: Record<DailyLog['recovery'], number> = { none: -0.3, small: 0.2, good: 0.6, full: 1.0 };
+
+  const activitySelected = log.activityType !== 'mostly sat';
+  const exerciseMins = activitySelected ? durationToMinutes[log.activityDuration] + activityBoost[log.activityIntensity] : 0;
+  const steps = activitySelected ? stepsByDuration[log.activityDuration] : 1400;
+  const waterMl = hydrationMap[log.hydration] + (log.activityIntensity === 'hard' ? 250 : 0);
+  const mood = clamp(Math.round(3 + (log.sleepQuality - 3) * 0.4 + recoveryLift[log.recovery] - (log.stressLevel - 3) * 0.5), 1, 5);
+
+  return {
+    sleep_hours: log.sleepHours,
+    water_ml: waterMl,
+    steps,
+    nutrition_score: dietBase[log.dietQuality],
+    exercise_mins: clamp(exerciseMins, 0, 180),
+    mood,
+  };
+};
+
+const SelectField: React.FC<{
+  value: string;
+  onChange: (value: string) => void;
+  className: string;
+  children: React.ReactNode;
+}> = ({ value, onChange, className, children }) => (
+  <div className="relative">
+    <select className={`${className} appearance-none pr-10 cursor-pointer`} value={value} onChange={e => onChange(e.target.value)}>
+      {children}
+    </select>
+    <ChevronDown size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-white/45" />
+  </div>
+);
 
 const DailyLogPanel: React.FC<{
   onClose: () => void;
   onSubmit: (log: DailyLog) => void;
 }> = ({ onClose, onSubmit }) => {
   const [log, setLog] = useState<DailyLog>({
-    sleep_hours: '', water_ml: '', steps: '',
-    nutrition_score: 5, exercise_mins: '', mood: 3,
+    sleepHours: 7,
+    sleepQuality: 3,
+    activityType: 'walked',
+    activityIntensity: 'moderate',
+    activityDuration: '20-30',
+    dietQuality: 'good',
+    hydration: 'adequate',
+    stressLevel: 3,
+    recovery: 'small',
   });
+  const [step, setStep] = useState(0);
   const [submitted, setSubmitted] = useState(false);
 
-  const update = <K extends keyof DailyLog>(k: K, v: DailyLog[K]) =>
-    setLog(prev => ({ ...prev, [k]: v }));
+  const steps = [
+    { title: 'Sleep', subtitle: 'Most predictive daily signal' },
+    { title: 'Activity', subtitle: 'Type, intensity, and duration' },
+    { title: 'Nutrition', subtitle: 'Quality and hydration only' },
+    { title: 'Stress', subtitle: 'Stress + recovery' },
+  ];
+
+  const update = <K extends keyof DailyLog>(key: K, value: DailyLog[K]) => setLog(prev => ({ ...prev, [key]: value }));
+  const isLastStep = step === steps.length - 1;
+  const fieldClass = 'w-full rounded-xl border border-white/15 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none transition-colors focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isLastStep) {
+      setStep(s => Math.min(s + 1, steps.length - 1));
+      return;
+    }
     onSubmit(log);
     setSubmitted(true);
     setTimeout(onClose, 1200);
   };
 
   return (
-    <div className="fixed inset-y-0 left-0 z-50 w-full max-w-sm pointer-events-auto log-slide-in">
-      <div className="h-full bg-slate-950/95 border-r border-white/10 backdrop-blur-2xl shadow-2xl flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-white/10">
+    <div className="fixed inset-0 z-50 bg-black/75 pointer-events-auto">
+      <div className="absolute left-0 right-0 bottom-0 sm:left-1/2 sm:-translate-x-1/2 sm:bottom-6 w-full sm:w-[min(560px,92vw)] h-[84vh] sm:h-[80vh] bg-slate-950 border border-white/10 rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden log-slide-in">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-white/10 text-cyan-400">
-              <ClipboardList size={18} />
+            <div className="p-2 rounded-xl bg-white/10 text-cyan-400">
+              <ClipboardList size={17} />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">Daily Log</h2>
-              <p className="text-xs text-white/40">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+              <h2 className="text-base font-bold text-white">Daily Log</h2>
+              <p className="text-xs text-white/45">Step {step + 1} of {steps.length}: {steps[step].title}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 text-slate-400 hover:text-white transition-colors">
@@ -294,101 +363,120 @@ const DailyLogPanel: React.FC<{
               <Check size={32} className="text-emerald-400" />
             </div>
             <p className="text-lg font-bold text-white">Logged!</p>
-            <p className="text-sm text-white/50">Your avatar is updating…</p>
+            <p className="text-sm text-white/55">Your avatar is updating...</p>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5">
-            {/* Sleep */}
-            <div>
-              <label className="flex items-center gap-2 text-xs font-bold text-white/50 uppercase tracking-widest mb-2">
-                <Moon size={13} className="text-indigo-400" /> Sleep
-              </label>
-              <div className="flex items-center gap-2">
-                <input type="number" placeholder="Hours" value={log.sleep_hours}
-                  onChange={e => update('sleep_hours', e.target.value === '' ? '' : parseFloat(e.target.value))}
-                  min="0" max="24" step="0.5"
-                  className="flex-1 bg-white/5 border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
-                <span className="text-white/30 text-sm">hrs</span>
-              </div>
-            </div>
-
-            {/* Water */}
-            <div>
-              <label className="flex items-center gap-2 text-xs font-bold text-white/50 uppercase tracking-widest mb-2">
-                <Droplet size={13} className="text-sky-400" /> Hydration
-              </label>
-              <div className="flex items-center gap-2">
-                <input type="number" placeholder="ml today" value={log.water_ml}
-                  onChange={e => update('water_ml', e.target.value === '' ? '' : parseInt(e.target.value))}
-                  min="0" step="100"
-                  className="flex-1 bg-white/5 border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition-all" />
-                <span className="text-white/30 text-sm">ml</span>
-              </div>
-            </div>
-
-            {/* Steps */}
-            <div>
-              <label className="flex items-center gap-2 text-xs font-bold text-white/50 uppercase tracking-widest mb-2">
-                <Footprints size={13} className="text-emerald-400" /> Steps
-              </label>
-              <input type="number" placeholder="Steps today" value={log.steps}
-                onChange={e => update('steps', e.target.value === '' ? '' : parseInt(e.target.value))}
-                min="0"
-                className="w-full bg-white/5 border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all" />
-            </div>
-
-            {/* Exercise */}
-            <div>
-              <label className="flex items-center gap-2 text-xs font-bold text-white/50 uppercase tracking-widest mb-2">
-                <Flame size={13} className="text-orange-400" /> Exercise
-              </label>
-              <div className="flex items-center gap-2">
-                <input type="number" placeholder="Active minutes" value={log.exercise_mins}
-                  onChange={e => update('exercise_mins', e.target.value === '' ? '' : parseInt(e.target.value))}
-                  min="0"
-                  className="flex-1 bg-white/5 border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-all" />
-                <span className="text-white/30 text-sm">min</span>
-              </div>
-            </div>
-
-            {/* Nutrition score */}
-            <div>
-              <label className="flex items-center gap-2 text-xs font-bold text-white/50 uppercase tracking-widest mb-2">
-                <Apple size={13} className="text-red-400" /> Nutrition Quality
-              </label>
-              <div className="flex items-center gap-3">
-                <input type="range" min="1" max="10" value={log.nutrition_score}
-                  onChange={e => update('nutrition_score', parseInt(e.target.value))}
-                  className="flex-1 h-1.5 bg-white/10 rounded-full appearance-none accent-red-400 cursor-pointer" />
-                <span className="text-red-400 font-bold text-sm w-6 text-center">{log.nutrition_score}</span>
-              </div>
-              <div className="flex justify-between text-[10px] text-white/25 mt-1 px-0.5">
-                <span>Poor</span><span>Excellent</span>
-              </div>
-            </div>
-
-            {/* Mood */}
-            <div>
-              <label className="text-xs font-bold text-white/50 uppercase tracking-widest mb-3 block">Mood</label>
-              <div className="flex gap-2">
-                {[1, 2, 3, 4, 5].map(m => (
-                  <button key={m} type="button" onClick={() => update('mood', m)}
-                    className={`flex-1 py-2 rounded-xl text-lg transition-all ${log.mood === m ? 'bg-white/20 ring-1 ring-white/40 scale-110' : 'bg-white/5 hover:bg-white/10'
-                      }`}>
-                    {MOOD_LABELS[m]}
-                  </button>
+          <form onSubmit={handleSubmit} className="flex-1 flex flex-col">
+            <div className="px-5 pt-4">
+              <div className="grid grid-cols-4 gap-2">
+                {steps.map((item, index) => (
+                  <div key={item.title} className={`h-1.5 rounded-full ${index <= step ? 'bg-cyan-400' : 'bg-white/15'}`} />
                 ))}
               </div>
+              <p className="mt-3 text-xs text-white/55">{steps[step].subtitle}</p>
             </div>
 
-            <div className="pt-2">
-              <button type="submit"
-                className="w-full py-3.5 bg-gradient-to-r from-cyan-500 to-blue-600
-                  hover:from-cyan-400 hover:to-blue-500 text-white font-bold rounded-2xl
-                  transition-all shadow-[0_0_24px_rgba(6,182,212,0.25)]
-                  hover:shadow-[0_0_36px_rgba(6,182,212,0.4)] hover:-translate-y-0.5">
-                Save Today's Log
-              </button>
+            <div className="flex-1 overflow-y-auto p-5">
+              {step === 0 && (
+                <section className="space-y-4 rounded-2xl border border-white/10 bg-slate-900 p-4">
+                  <div>
+                    <label className="text-xs text-white/60">Hours slept</label>
+                    <input className={fieldClass} type="number" min={3} max={12} step={0.5} value={log.sleepHours} onChange={e => update('sleepHours', parseFloat(e.target.value))} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60">Sleep quality (1-5)</label>
+                    <input className={fieldClass} type="number" min={1} max={5} value={log.sleepQuality} onChange={e => update('sleepQuality', parseInt(e.target.value) as DailyLog['sleepQuality'])} />
+                  </div>
+                </section>
+              )}
+
+              {step === 1 && (
+                <section className="space-y-4 rounded-2xl border border-white/10 bg-slate-900 p-4">
+                  <div>
+                    <label className="text-xs text-white/60">Main activity</label>
+                    <SelectField className={fieldClass} value={log.activityType} onChange={value => update('activityType', value as DailyLog['activityType'])}>
+                      {ACTIVITY_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                    </SelectField>
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60">Intensity</label>
+                    <SelectField className={fieldClass} value={log.activityIntensity} onChange={value => update('activityIntensity', value as DailyLog['activityIntensity'])}>
+                      <option value="easy">Easy</option>
+                      <option value="moderate">Moderate</option>
+                      <option value="hard">Hard</option>
+                    </SelectField>
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60">Duration</label>
+                    <SelectField className={fieldClass} value={log.activityDuration} onChange={value => update('activityDuration', value as DailyLog['activityDuration'])}>
+                      <option value="<10">&lt;10 min</option>
+                      <option value="10-20">10-20 min</option>
+                      <option value="20-30">20-30 min</option>
+                      <option value="30-60">30-60 min</option>
+                      <option value="60+">60+ min</option>
+                    </SelectField>
+                  </div>
+                </section>
+              )}
+
+              {step === 2 && (
+                <section className="space-y-4 rounded-2xl border border-white/10 bg-slate-900 p-4">
+                  <div>
+                    <label className="text-xs text-white/60">Food quality</label>
+                    <SelectField className={fieldClass} value={log.dietQuality} onChange={value => update('dietQuality', value as DailyLog['dietQuality'])}>
+                      <option value="rough">Rough day</option>
+                      <option value="mixed">Mixed bag</option>
+                      <option value="good">Pretty good</option>
+                      <option value="nourishing">Nourishing</option>
+                    </SelectField>
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60">Hydration</label>
+                    <SelectField className={fieldClass} value={log.hydration} onChange={value => update('hydration', value as DailyLog['hydration'])}>
+                      <option value="low">Low</option>
+                      <option value="adequate">Adequate</option>
+                      <option value="high">High</option>
+                    </SelectField>
+                  </div>
+                </section>
+              )}
+
+              {step === 3 && (
+                <section className="space-y-4 rounded-2xl border border-white/10 bg-slate-900 p-4">
+                  <div>
+                    <label className="text-xs text-white/60">Stress level (1-5)</label>
+                    <input className={fieldClass} type="number" min={1} max={5} value={log.stressLevel} onChange={e => update('stressLevel', parseInt(e.target.value) as DailyLog['stressLevel'])} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-white/60">Recovery</label>
+                    <SelectField className={fieldClass} value={log.recovery} onChange={value => update('recovery', value as DailyLog['recovery'])}>
+                      <option value="none">None</option>
+                      <option value="small">Small moments</option>
+                      <option value="good">Good chunks</option>
+                      <option value="full">Full day off</option>
+                    </SelectField>
+                  </div>
+                </section>
+              )}
+            </div>
+
+            <div className="p-5 border-t border-white/10 bg-slate-950">
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setStep(s => Math.max(0, s - 1))}
+                  disabled={step === 0}
+                  className="flex-1 rounded-xl border border-white/15 py-3 text-sm font-semibold text-white/80 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Back
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 rounded-xl bg-cyan-500 hover:bg-cyan-400 py-3 text-sm font-bold text-slate-950 transition-colors"
+                >
+                  {isLastStep ? 'Save Log' : 'Next'}
+                </button>
+              </div>
             </div>
           </form>
         )}
@@ -565,7 +653,8 @@ function App() {
   }, [avatarState]);
 
   const handleLogSubmit = useCallback((log: DailyLog) => {
-    logHabits(log as any).then(res => {
+    const habitsPayload = mapDailyLogToHabits(log);
+    logHabits(habitsPayload).then(res => {
       setAvatarState(res.avatar_state);
     }).catch(err => console.error(err));
   }, []);
@@ -647,7 +736,7 @@ function App() {
         )}
 
         {/* ── Bottom HUD ── */}
-        <footer className="flex justify-center pb-5 px-4 pointer-events-none">
+        <footer className="flex justify-center pb-24 sm:pb-5 px-4 pointer-events-none">
           <OrganHUD
             scores={avatarState.organ_scores}
             onSelect={(name, score) => { setSelectedOrgan({ name, score }); setShowLog(false); }}
@@ -672,13 +761,15 @@ function App() {
         />
       )}
 
-      {/* ── Log trigger FAB (always accessible, bottom-left) ── */}
+      {/* ── Log trigger FAB (always accessible, bottom-center) ── */}
       {!showLog && !selectedOrgan && (
         <button onClick={() => setShowLog(true)}
-          className="absolute bottom-24 left-5 z-20 pointer-events-auto flex items-center gap-2
-            px-4 py-2.5 bg-cyan-500/15 hover:bg-cyan-500/25 backdrop-blur-md rounded-2xl
-            border border-cyan-500/30 text-cyan-400 text-sm font-semibold transition-all
-            hover:shadow-[0_0_20px_rgba(6,182,212,0.25)] hover:-translate-y-0.5">
+          className="absolute bottom-5 left-1/2 -translate-x-1/2 z-20 pointer-events-auto
+            w-[calc(100%-2rem)] max-w-sm sm:w-auto
+            flex items-center justify-center gap-2
+            px-5 py-3 bg-cyan-500/20 hover:bg-cyan-500/30 backdrop-blur-md rounded-2xl
+            border border-cyan-400/40 text-cyan-200 text-sm font-semibold transition-all
+            shadow-[0_0_22px_rgba(6,182,212,0.25)] hover:shadow-[0_0_30px_rgba(6,182,212,0.4)]">
           <Plus size={15} />
           Log Today
         </button>
@@ -698,3 +789,5 @@ function App() {
 }
 
 export default App;
+
+
