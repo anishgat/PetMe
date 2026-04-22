@@ -1,13 +1,13 @@
-import { useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import PageTitle from '../components/PageTitle'
-import SectionLabel from '../components/SectionLabel'
-import { useHealth } from '../features/health/HealthContext'
-import { parseActivitiesFromText } from '../features/health/llm/parser'
 import {
-  DEFAULT_MODEL,
-  createOpenAIResponsesClient,
-} from '../features/health/llm/openaiClient'
-import type { ActivityEvent, ActivityType } from '../features/health/model/types'
+  applyActivityEvents,
+  buildImpactNarrative,
+  summarizeContributionsByOrgan,
+} from '../features/health'
+import { useHealth } from '../features/health/HealthContext'
+import type { ActivityEvent } from '../features/health/model/types'
 
 type MealType =
   | 'none'
@@ -19,418 +19,701 @@ type MealType =
   | 'protein_rich_meal'
   | 'fiber_rich_meal'
 
-type LogFormState = {
-  sleepHours: number
+type WizardState = {
+  sleepDuration: number
+  sleepQuality: number
+  wakeFeeling: number
+  stressLevel: number
+  walkingSteps: number
   cardioMinutes: number
   strengthMinutes: number
-  walkingSteps: number
-  stressLevel: number
-  hydrationServings: number
+  socialMoments: number
+  mealType: MealType
   alcoholDrinks: number
   smokingCigarettes: number
-  socialMoments: number
-  sedentaryDay: boolean
-  mealType: MealType
 }
 
-const INITIAL_FORM_STATE: LogFormState = {
-  sleepHours: 0,
+const INITIAL_STATE: WizardState = {
+  sleepDuration: 7,
+  sleepQuality: 3,
+  wakeFeeling: 3,
+  stressLevel: 4,
+  walkingSteps: 5000,
   cardioMinutes: 0,
   strengthMinutes: 0,
-  walkingSteps: 0,
-  stressLevel: 0,
-  hydrationServings: 0,
+  socialMoments: 1,
+  mealType: 'balanced_meal',
   alcoholDrinks: 0,
   smokingCigarettes: 0,
-  socialMoments: 0,
-  sedentaryDay: false,
-  mealType: 'none',
 }
 
-const MEAL_OPTIONS: Array<{ value: MealType; label: string }> = [
-  { value: 'none', label: 'No meal tag' },
-  { value: 'healthy_meal', label: 'Healthy meal' },
-  { value: 'balanced_meal', label: 'Balanced meal' },
-  { value: 'processed_food', label: 'Processed food' },
-  { value: 'high_sugar_meal', label: 'High sugar meal' },
-  { value: 'high_sat_fat_meal', label: 'High saturated fat meal' },
-  { value: 'protein_rich_meal', label: 'Protein-rich meal' },
-  { value: 'fiber_rich_meal', label: 'Fiber-rich meal' },
+const STEPS = [
+  'Sleep',
+  'Stress',
+  'Movement',
+  'Social',
+  'Diet',
+  'Substances',
+] as const
+
+const DIET_OPTIONS: Array<{ value: MealType; label: string; hint: string }> = [
+  {
+    value: 'healthy_meal',
+    label: 'Fresh & whole',
+    hint: 'Mostly whole foods and balanced ingredients.',
+  },
+  {
+    value: 'balanced_meal',
+    label: 'Balanced',
+    hint: 'A typical decent meal with some variety.',
+  },
+  {
+    value: 'protein_rich_meal',
+    label: 'Protein focused',
+    hint: 'Extra protein intake today.',
+  },
+  {
+    value: 'fiber_rich_meal',
+    label: 'Fiber focused',
+    hint: 'Vegetables, legumes, or high-fiber foods.',
+  },
+  {
+    value: 'processed_food',
+    label: 'Mostly processed',
+    hint: 'Packaged or highly processed food.',
+  },
+  {
+    value: 'high_sugar_meal',
+    label: 'High sugar',
+    hint: 'Sugar-heavy eating pattern today.',
+  },
+  {
+    value: 'high_sat_fat_meal',
+    label: 'High saturated fat',
+    hint: 'Heavier saturated fat intake today.',
+  },
+  {
+    value: 'none',
+    label: 'Skip diet for now',
+    hint: 'No diet tag for this check-in.',
+  },
 ]
 
-const FIELD_CONFIG: Array<{
-  key: keyof Omit<LogFormState, 'sedentaryDay' | 'mealType'>
-  label: string
-  hint: string
-  step: number
-}> = [
-  { key: 'sleepHours', label: 'Sleep', hint: 'hours last night', step: 0.5 },
-  { key: 'cardioMinutes', label: 'Cardio', hint: 'minutes today', step: 5 },
-  { key: 'strengthMinutes', label: 'Strength', hint: 'minutes today', step: 5 },
-  { key: 'walkingSteps', label: 'Walking', hint: 'steps today', step: 500 },
-  { key: 'stressLevel', label: 'Stress', hint: 'level from 0 to 10', step: 1 },
-  { key: 'hydrationServings', label: 'Hydration', hint: 'glasses or bottles', step: 1 },
-  { key: 'alcoholDrinks', label: 'Alcohol', hint: 'drinks', step: 1 },
-  { key: 'smokingCigarettes', label: 'Smoking', hint: 'cigarettes', step: 1 },
-  { key: 'socialMoments', label: 'Social connection', hint: 'meaningful check-ins', step: 1 },
-]
+function clampPercent(value: number) {
+  return Math.min(100, Math.max(0, Math.round(value)))
+}
 
-function formatLastLogged(timestamp?: string) {
-  if (!timestamp) return 'No activity logged yet.'
-
-  return `Last update ${new Date(timestamp).toLocaleString([], {
+function formatTimestamp(timestamp?: string) {
+  if (!timestamp) return 'No check-ins yet.'
+  return new Date(timestamp).toLocaleString([], {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-  })}`
+  })
 }
 
-function buildEvents(formState: LogFormState): ActivityEvent[] {
+function buildEvents(values: WizardState): ActivityEvent[] {
   const events: ActivityEvent[] = []
+  const addEvent = (event: ActivityEvent | null) => {
+    if (event) events.push(event)
+  }
 
-  const pushNumericEvent = (
-    amount: number,
-    type: ActivityType,
-    unit: ActivityEvent['unit'],
-  ) => {
-    if (amount <= 0) return
-    events.push({
-      type,
-      amount,
-      unit,
-      confidence: 1,
+  const sleepModifier = 0.8 + ((values.sleepQuality + values.wakeFeeling) / 10) * 0.4
+  const effectiveSleep = Math.min(12, Math.max(0, values.sleepDuration * sleepModifier))
+  if (effectiveSleep > 0) {
+    addEvent({
+      type: 'sleep',
+      amount: Number(effectiveSleep.toFixed(1)),
+      unit: 'hour',
       source: 'manual',
+      confidence: 1,
     })
   }
 
-  pushNumericEvent(formState.sleepHours, 'sleep', 'hour')
-  pushNumericEvent(formState.cardioMinutes, 'cardio', 'minute')
-  pushNumericEvent(formState.strengthMinutes, 'strength', 'minute')
-  pushNumericEvent(formState.walkingSteps, 'walking', 'steps')
-  pushNumericEvent(formState.stressLevel, 'stress', 'level_10')
-  pushNumericEvent(formState.hydrationServings, 'hydration', 'serving')
-  pushNumericEvent(formState.alcoholDrinks, 'alcohol', 'drink')
-  pushNumericEvent(formState.smokingCigarettes, 'smoking', 'cigarette')
-  pushNumericEvent(formState.socialMoments, 'social_connection', 'count')
-
-  if (formState.mealType !== 'none') {
-    events.push({
-      type: formState.mealType,
-      amount: 1,
-      unit: 'meal',
-      confidence: 1,
+  if (values.stressLevel > 0) {
+    addEvent({
+      type: 'stress',
+      amount: values.stressLevel,
+      unit: 'level_10',
       source: 'manual',
+      confidence: 1,
     })
   }
 
-  if (formState.sedentaryDay) {
-    events.push({
+  if (values.walkingSteps > 0) {
+    addEvent({
+      type: 'walking',
+      amount: values.walkingSteps,
+      unit: 'steps',
+      source: 'manual',
+      confidence: 1,
+    })
+  }
+
+  if (values.cardioMinutes > 0) {
+    addEvent({
+      type: 'cardio',
+      amount: values.cardioMinutes,
+      unit: 'minute',
+      source: 'manual',
+      confidence: 1,
+    })
+  }
+
+  if (values.strengthMinutes > 0) {
+    addEvent({
+      type: 'strength',
+      amount: values.strengthMinutes,
+      unit: 'minute',
+      source: 'manual',
+      confidence: 1,
+    })
+  }
+
+  if (
+    values.walkingSteps < 2500 &&
+    values.cardioMinutes === 0 &&
+    values.strengthMinutes === 0
+  ) {
+    addEvent({
       type: 'sedentary_day',
       amount: 1,
       unit: 'count',
-      confidence: 1,
       source: 'manual',
+      confidence: 1,
+    })
+  }
+
+  if (values.socialMoments > 0) {
+    addEvent({
+      type: 'social_connection',
+      amount: values.socialMoments,
+      unit: 'count',
+      source: 'manual',
+      confidence: 1,
+    })
+  }
+
+  if (values.mealType !== 'none') {
+    addEvent({
+      type: values.mealType,
+      amount: 1,
+      unit: 'meal',
+      source: 'manual',
+      confidence: 1,
+    })
+  }
+
+  if (values.alcoholDrinks >= 5) {
+    addEvent({
+      type: 'alcohol_heavy_intake',
+      amount: values.alcoholDrinks,
+      unit: 'drink',
+      source: 'manual',
+      confidence: 1,
+    })
+  } else if (values.alcoholDrinks > 0) {
+    addEvent({
+      type: 'alcohol',
+      amount: values.alcoholDrinks,
+      unit: 'drink',
+      source: 'manual',
+      confidence: 1,
+    })
+  }
+
+  if (values.smokingCigarettes > 0) {
+    addEvent({
+      type: 'smoking',
+      amount: values.smokingCigarettes,
+      unit: 'cigarette',
+      source: 'manual',
+      confidence: 1,
     })
   }
 
   return events
 }
 
+type StepCardProps = {
+  children: ReactNode
+}
+
+function StepCard({ children }: StepCardProps) {
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      {children}
+    </section>
+  )
+}
+
 export default function LogActions() {
-  const { logActivities, logEntries, overallScore } = useHealth()
-  const [formState, setFormState] = useState(INITIAL_FORM_STATE)
-  const [feedback, setFeedback] = useState<string | null>(null)
-  const [parserApiKey, setParserApiKey] = useState('')
-  const [parserModel, setParserModel] = useState(DEFAULT_MODEL)
-  const [parserInput, setParserInput] = useState('')
-  const [parsedEvents, setParsedEvents] = useState<ActivityEvent[]>([])
-  const [parserMessage, setParserMessage] = useState<string | null>(null)
-  const [isParsing, setIsParsing] = useState(false)
+  const { logActivities, logEntries, organStates, overallScore, streaks } = useHealth()
+  const [stepIndex, setStepIndex] = useState(0)
+  const [values, setValues] = useState(INITIAL_STATE)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const [savedEventCount, setSavedEventCount] = useState(0)
 
   const latestEntry = logEntries[0]
-
-  const handleNumberChange = (
-    key: keyof Omit<LogFormState, 'sedentaryDay' | 'mealType'>,
-    rawValue: string,
-  ) => {
-    const nextValue = Number(rawValue)
-
-    setFormState((current) => ({
-      ...current,
-      [key]: Number.isFinite(nextValue) ? Math.max(0, nextValue) : 0,
-    }))
-  }
-
-  const handleParseFromText = async () => {
-    const trimmedInput = parserInput.trim()
-    const trimmedApiKey = parserApiKey.trim()
-
-    if (!trimmedInput) {
-      setParserMessage('Describe the day first, then run the parser.')
-      return
+  const totalSteps = STEPS.length
+  const isLastStep = stepIndex === totalSteps - 1
+  const progressPercent = clampPercent(((stepIndex + 1) / totalSteps) * 100)
+  const draftEvents = useMemo(() => buildEvents(values), [values])
+  const projectedImpacts = useMemo(() => {
+    if (draftEvents.length === 0) {
+      return []
     }
 
-    if (!trimmedApiKey) {
-      setParserMessage('Add an API key for the parser test. It is only kept in memory.')
-      return
-    }
+    const result = applyActivityEvents(organStates, draftEvents, streaks)
+    return summarizeContributionsByOrgan(result.contributions, 4)
+  }, [draftEvents, organStates, streaks])
+  const projectedImpactNarrative = useMemo(
+    () => buildImpactNarrative(projectedImpacts),
+    [projectedImpacts],
+  )
 
-    setIsParsing(true)
-    setParserMessage(null)
-
-    try {
-      const client = createOpenAIResponsesClient({
-        apiKey: trimmedApiKey,
-        model: parserModel.trim() || DEFAULT_MODEL,
-      })
-      const result = await parseActivitiesFromText(client, trimmedInput)
-
-      setParsedEvents(
-        result.activities.map((activity) => ({
-          ...activity,
-          source: 'llm',
-        })),
-      )
-      setParserMessage(`Parsed ${result.activities.length} activities from your note.`)
-    } catch (error) {
-      setParsedEvents([])
-      setParserMessage(
-        error instanceof Error ? error.message : 'The parser request failed.',
-      )
-    } finally {
-      setIsParsing(false)
-    }
-  }
-
-  const handleSubmit = () => {
-    const events = [...parsedEvents, ...buildEvents(formState)]
+  const handleSave = () => {
+    const events = draftEvents
 
     if (events.length === 0) {
-      setFeedback('Add at least one signal before saving this check-in.')
+      setSaveMessage('Add at least one signal before saving this check-in.')
       return
     }
 
     logActivities(events)
-    setFormState(INITIAL_FORM_STATE)
-    setParsedEvents([])
-    setParserInput('')
-    setFeedback(`Saved ${events.length} signals. The organ model has been updated.`)
+    setSavedEventCount(events.length)
+    setSaveMessage(
+      projectedImpactNarrative != null
+        ? `Check-in saved. ${projectedImpactNarrative}`
+        : 'Check-in saved. Your organ model has been updated.',
+    )
+    setStepIndex(0)
+    setValues(INITIAL_STATE)
   }
 
+  const summary = useMemo(
+    () => ({
+      sleep: `${values.sleepDuration.toFixed(1)}h, quality ${values.sleepQuality}/5, wake ${values.wakeFeeling}/5`,
+      stress: `${values.stressLevel}/10`,
+      movement: `${values.walkingSteps.toLocaleString()} steps, ${values.cardioMinutes} cardio min, ${values.strengthMinutes} strength min`,
+      social: `${values.socialMoments} meaningful interactions`,
+      diet:
+        DIET_OPTIONS.find((option) => option.value === values.mealType)?.label ??
+        'No tag',
+      substances:
+        values.alcoholDrinks === 0 && values.smokingCigarettes === 0
+          ? 'None logged'
+          : `${values.alcoholDrinks} drinks, ${values.smokingCigarettes} cigarettes`,
+    }),
+    [values],
+  )
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-end justify-between gap-4">
-        <div className="space-y-2">
-          <PageTitle>Log an action</PageTitle>
-          <p className="text-sm text-slate-600">
-            Add a few real signals and the organ model updates immediately.
-          </p>
+    <div className="mx-auto w-full max-w-xl space-y-5 pb-8">
+      <section className="rounded-3xl border border-emerald-100 bg-emerald-50/80 p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <PageTitle>Daily check-in</PageTitle>
+            <p className="mt-1 text-sm text-slate-600">
+              A quick guided log for your future-self model.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-right">
+            <p className="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-emerald-700">
+              Overall
+            </p>
+            <p className="text-xl font-semibold text-emerald-900">
+              {overallScore.toFixed(1)}
+            </p>
+          </div>
         </div>
-        <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-right">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">
-            Overall
-          </p>
-          <p className="text-2xl font-semibold text-emerald-900">{overallScore.toFixed(1)}</p>
-        </div>
-      </div>
+        <p className="mt-3 text-xs font-medium text-slate-500">
+          Last check-in: {formatTimestamp(latestEntry?.timestamp)}
+        </p>
+      </section>
+
+      {saveMessage ? (
+        <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-sm text-emerald-900">
+          <p className="font-semibold">{saveMessage}</p>
+          {savedEventCount > 0 ? <p className="mt-1">Saved {savedEventCount} signals.</p> : null}
+          <Link
+            to="/"
+            className="mt-3 inline-flex rounded-full border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700"
+          >
+            Back to avatar
+          </Link>
+        </section>
+      ) : null}
 
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <SectionLabel>Latest check-in</SectionLabel>
-            <p className="mt-2 text-sm text-slate-600">{formatLastLogged(latestEntry?.timestamp)}</p>
-          </div>
-          {feedback ? (
-            <p className="max-w-xs text-right text-sm font-medium text-emerald-700">
-              {feedback}
-            </p>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="space-y-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="space-y-2">
-          <SectionLabel>AI parser</SectionLabel>
-          <p className="text-sm text-slate-600">
-            Describe the day in plain language, parse it into activity events, then save the
-            parsed signals with or without the manual inputs below.
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+            Step {stepIndex + 1} of {totalSteps}
           </p>
+          <p className="text-sm font-semibold text-slate-700">{STEPS[stepIndex]}</p>
         </div>
-
-        <label className="block">
-          <span className="text-sm font-semibold text-slate-800">Narrative log</span>
-          <textarea
-            value={parserInput}
-            onChange={(event) => setParserInput(event.target.value)}
-            rows={5}
-            placeholder="Example: I slept 6 hours, walked 8,000 steps, ate processed food, and felt pretty stressed."
-            className="mt-3 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-emerald-400"
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+          <div
+            className="h-full rounded-full bg-emerald-500 transition-all"
+            style={{ width: `${progressPercent}%` }}
           />
-        </label>
-
-        <div className="grid gap-3 sm:grid-cols-[1fr_0.8fr_auto]">
-          <label className="block">
-            <span className="text-sm font-semibold text-slate-800">OpenAI API key</span>
-            <input
-              type="password"
-              autoComplete="off"
-              value={parserApiKey}
-              onChange={(event) => setParserApiKey(event.target.value)}
-              placeholder="sk-..."
-              className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-emerald-400"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-semibold text-slate-800">Model</span>
-            <input
-              type="text"
-              value={parserModel}
-              onChange={(event) => setParserModel(event.target.value)}
-              className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-emerald-400"
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={() => void handleParseFromText()}
-            disabled={isParsing}
-            className="self-end rounded-2xl border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isParsing ? 'Parsing...' : 'Parse text'}
-          </button>
         </div>
-
-        <p className="text-xs text-slate-500">
-          This test path sends the note and API key directly from the browser. Keep it for local
-          hackathon testing only, not production.
-        </p>
-
-        {parserMessage ? (
-          <p className="text-sm font-medium text-slate-600">{parserMessage}</p>
-        ) : null}
-
-        {parsedEvents.length > 0 ? (
-          <div className="space-y-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold text-emerald-900">Parsed signals ready</p>
-                <p className="text-xs text-emerald-700">
-                  These will be included when you save the check-in.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setParsedEvents([])
-                  setParserMessage('Cleared parsed signals.')
-                }}
-                className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700"
-              >
-                Clear
-              </button>
-            </div>
-
-            <div className="grid gap-2 sm:grid-cols-2">
-              {parsedEvents.map((event, index) => (
-                <div
-                  key={`${event.type}-${index}`}
-                  className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm text-slate-700"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-semibold text-slate-800">
-                      {event.type.replace(/_/g, ' ')}
-                    </span>
-                    <span className="text-xs text-slate-400">
-                      {typeof event.confidence === 'number'
-                        ? `${Math.round(event.confidence * 100)}%`
-                        : 'no score'}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {event.amount} {event.unit ?? 'units'}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2">
-        {FIELD_CONFIG.map((field) => (
-          <label
-            key={field.key}
-            className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-sm font-semibold text-slate-800">{field.label}</span>
-              <span className="text-xs text-slate-400">{field.hint}</span>
-            </div>
+      {stepIndex === 0 ? (
+        <StepCard>
+          <h2 className="text-base font-semibold text-slate-900">Sleep</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            How was your sleep and how did you feel when you woke up?
+          </p>
+          <div className="mt-4 space-y-4">
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Duration (hours)</span>
+              <input
+                type="number"
+                min="0"
+                max="14"
+                step="0.5"
+                value={values.sleepDuration}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    sleepDuration: Math.max(0, Number(event.target.value) || 0),
+                  }))
+                }
+                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Quality (1-5)</span>
+              <input
+                type="range"
+                min="1"
+                max="5"
+                step="1"
+                value={values.sleepQuality}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    sleepQuality: Number(event.target.value),
+                  }))
+                }
+                className="mt-2 w-full accent-emerald-600"
+              />
+              <p className="mt-1 text-xs text-slate-500">Current: {values.sleepQuality}/5</p>
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">
+                Feeling when awake (1-5)
+              </span>
+              <input
+                type="range"
+                min="1"
+                max="5"
+                step="1"
+                value={values.wakeFeeling}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    wakeFeeling: Number(event.target.value),
+                  }))
+                }
+                className="mt-2 w-full accent-emerald-600"
+              />
+              <p className="mt-1 text-xs text-slate-500">Current: {values.wakeFeeling}/5</p>
+            </label>
+          </div>
+        </StepCard>
+      ) : null}
+
+      {stepIndex === 1 ? (
+        <StepCard>
+          <h2 className="text-base font-semibold text-slate-900">Stress and mood</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Log your stress level for today on a 0 to 10 scale.
+          </p>
+          <label className="mt-4 block">
+            <span className="text-sm font-medium text-slate-700">Mood pressure level</span>
+            <input
+              type="range"
+              min="0"
+              max="10"
+              step="1"
+              value={values.stressLevel}
+              onChange={(event) =>
+                setValues((current) => ({
+                  ...current,
+                  stressLevel: Number(event.target.value),
+                }))
+              }
+              className="mt-2 w-full accent-emerald-600"
+            />
+            <p className="mt-1 text-xs text-slate-500">Current: {values.stressLevel}/10</p>
+          </label>
+        </StepCard>
+      ) : null}
+
+      {stepIndex === 2 ? (
+        <StepCard>
+          <h2 className="text-base font-semibold text-slate-900">Movement and exercise</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Capture your daily movement and training minutes.
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Walking steps</span>
+              <input
+                type="number"
+                min="0"
+                step="500"
+                value={values.walkingSteps}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    walkingSteps: Math.max(0, Number(event.target.value) || 0),
+                  }))
+                }
+                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Cardio minutes</span>
+              <input
+                type="number"
+                min="0"
+                step="5"
+                value={values.cardioMinutes}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    cardioMinutes: Math.max(0, Number(event.target.value) || 0),
+                  }))
+                }
+                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Strength minutes</span>
+              <input
+                type="number"
+                min="0"
+                step="5"
+                value={values.strengthMinutes}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    strengthMinutes: Math.max(0, Number(event.target.value) || 0),
+                  }))
+                }
+                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
+              />
+            </label>
+          </div>
+        </StepCard>
+      ) : null}
+
+      {stepIndex === 3 ? (
+        <StepCard>
+          <h2 className="text-base font-semibold text-slate-900">Social interaction</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            How many meaningful interactions did you have today?
+          </p>
+          <label className="mt-4 block">
+            <span className="text-sm font-medium text-slate-700">Meaningful moments</span>
             <input
               type="number"
               min="0"
-              step={field.step}
-              value={formState[field.key]}
-              onChange={(event) => handleNumberChange(field.key, event.target.value)}
-              className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none ring-0 transition focus:border-emerald-400"
-            />
-          </label>
-        ))}
-      </section>
-
-      <section className="grid gap-3 sm:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <label className="block">
-            <span className="text-sm font-semibold text-slate-800">Meal quality</span>
-            <select
-              value={formState.mealType}
+              step="1"
+              value={values.socialMoments}
               onChange={(event) =>
-                setFormState((current) => ({
+                setValues((current) => ({
                   ...current,
-                  mealType: event.target.value as MealType,
+                  socialMoments: Math.max(0, Number(event.target.value) || 0),
                 }))
               }
-              className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-emerald-400"
-            >
-              {MEAL_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
+            />
           </label>
-        </div>
+        </StepCard>
+      ) : null}
 
-        <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div>
-            <p className="text-sm font-semibold text-slate-800">Sedentary day</p>
-            <p className="mt-1 text-xs text-slate-500">
-              Log this when most of the day was seated and inactive.
-            </p>
+      {stepIndex === 4 ? (
+        <StepCard>
+          <h2 className="text-base font-semibold text-slate-900">Quality of diet</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Pick the option that best matches your day.
+          </p>
+          <div className="mt-4 space-y-2">
+            {DIET_OPTIONS.map((option) => (
+              <button
+                type="button"
+                key={option.value}
+                onClick={() =>
+                  setValues((current) => ({
+                    ...current,
+                    mealType: option.value,
+                  }))
+                }
+                className={`w-full rounded-2xl border px-3 py-2 text-left transition ${
+                  values.mealType === option.value
+                    ? 'border-emerald-300 bg-emerald-50'
+                    : 'border-slate-200 bg-white hover:border-emerald-200'
+                }`}
+              >
+                <p className="text-sm font-semibold text-slate-800">{option.label}</p>
+                <p className="mt-0.5 text-xs text-slate-500">{option.hint}</p>
+              </button>
+            ))}
           </div>
-          <input
-            type="checkbox"
-            checked={formState.sedentaryDay}
-            onChange={(event) =>
-              setFormState((current) => ({
-                ...current,
-                sedentaryDay: event.target.checked,
-              }))
-            }
-            className="h-4 w-4 accent-emerald-600"
-          />
-        </label>
-      </section>
+        </StepCard>
+      ) : null}
 
-      <button
-        type="button"
-        onClick={handleSubmit}
-        className="w-full rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700"
-      >
-        Save check-in
-      </button>
+      {stepIndex === 5 ? (
+        <StepCard>
+          <h2 className="text-base font-semibold text-slate-900">Substances (optional)</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Leave these at zero if none today.
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Alcohol drinks</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={values.alcoholDrinks}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    alcoholDrinks: Math.max(0, Number(event.target.value) || 0),
+                  }))
+                }
+                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">
+                Smoking cigarettes
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={values.smokingCigarettes}
+                onChange={(event) =>
+                  setValues((current) => ({
+                    ...current,
+                    smokingCigarettes: Math.max(0, Number(event.target.value) || 0),
+                  }))
+                }
+                className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-400"
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+              Review
+            </p>
+            <ul className="mt-2 space-y-1 text-sm text-slate-600">
+              <li>Sleep: {summary.sleep}</li>
+              <li>Stress: {summary.stress}</li>
+              <li>Movement: {summary.movement}</li>
+              <li>Social: {summary.social}</li>
+              <li>Diet: {summary.diet}</li>
+              <li>Substances: {summary.substances}</li>
+            </ul>
+          </div>
+        </StepCard>
+      ) : null}
+
+      {projectedImpacts.length > 0 ? (
+        <section className="rounded-3xl border border-emerald-100 bg-white/90 p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
+                Projected organ impact
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                {projectedImpactNarrative ??
+                  'This check-in is ready to update the organ model.'}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-right">
+              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                Signals
+              </p>
+              <p className="text-lg font-semibold text-emerald-900">
+                {draftEvents.length}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {projectedImpacts.map((impact) => {
+              const deltaTone =
+                impact.direction === 'up'
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : impact.direction === 'down'
+                    ? 'bg-rose-50 text-rose-700'
+                    : 'bg-slate-100 text-slate-500'
+              const deltaText =
+                impact.direction === 'flat'
+                  ? 'Stable'
+                  : `${impact.scoreDelta > 0 ? '+' : ''}${impact.scoreDelta.toFixed(1)}`
+
+              return (
+                <div
+                  key={impact.organ}
+                  className="rounded-2xl border border-slate-200 bg-white px-3 py-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-800">{impact.label}</p>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] ${deltaTone}`}
+                    >
+                      {deltaText}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Driven by {impact.drivers.slice(0, 2).join(', ')}.
+                  </p>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setStepIndex((current) => Math.max(0, current - 1))}
+          disabled={stepIndex === 0}
+          className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Back
+        </button>
+
+        {isLastStep ? (
+          <button
+            type="button"
+            onClick={handleSave}
+            className="ml-auto rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+          >
+            Save check-in
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setStepIndex((current) => Math.min(totalSteps - 1, current + 1))}
+            className="ml-auto rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+          >
+            Next
+          </button>
+        )}
+      </section>
     </div>
   )
 }
