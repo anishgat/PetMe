@@ -1,14 +1,19 @@
 import { ContactShadows, Environment, OrbitControls, Sky } from '@react-three/drei';
 import { Avatar } from './Avatar';
 import { AvatarStatsOverlay } from './AvatarStatsOverlay';
+import type { HealthStatCard } from '../features/health/HealthContext';
 
-export const AvatarCanvas = () => {
+type AvatarCanvasProps = {
+	statCards: HealthStatCard[];
+};
+
+export const AvatarCanvas = ({ statCards }: AvatarCanvasProps) => {
 	return (
 		<>
 			<OrbitControls />
 			<Sky />
 			<Environment preset="sunset" />
-			<AvatarStatsOverlay />
+			<AvatarStatsOverlay statCards={statCards} />
 			<group position-y={-1}>
 				<ContactShadows
 					opacity={1}

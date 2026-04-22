@@ -1,40 +1,15 @@
 import { Html } from '@react-three/drei';
+import type { HealthStatCard } from '../features/health/HealthContext';
 
-const statCards = [
-	{
-		label: 'Movement',
-		value: '8,426',
-		unit: 'steps',
-		accent: 'from-emerald-400/80 via-lime-300/60 to-transparent',
-		ring: 'border-emerald-200/70',
-		tint: 'text-emerald-950',
-		note: '+12% vs yesterday',
-	},
-	{
-		label: 'Sleep',
-		value: '7.8',
-		unit: 'hours',
-		accent: 'from-sky-400/80 via-cyan-200/60 to-transparent',
-		ring: 'border-sky-200/70',
-		tint: 'text-sky-950',
-		note: 'REM rhythm stable',
-	},
-	{
-		label: 'Mood',
-		value: 'Calm',
-		unit: 'steady',
-		accent: 'from-amber-300/80 via-orange-200/60 to-transparent',
-		ring: 'border-orange-200/80',
-		tint: 'text-orange-950',
-		note: 'Energy is balanced',
-	},
-] as const;
+type AvatarStatsOverlayProps = {
+	statCards: HealthStatCard[];
+};
 
-export const AvatarStatsOverlay = () => {
+export const AvatarStatsOverlay = ({ statCards }: AvatarStatsOverlayProps) => {
 	return (
 		<Html fullscreen>
-			<div className="pointer-events-none flex h-full w-full items-end justify-center px-4 pb-8 pt-28 sm:items-start sm:justify-end sm:px-8 sm:pb-10 sm:pt-24">
-				<div className="grid w-full max-w-sm gap-3 sm:w-80">
+			<div className="pointer-events-none flex h-full w-full items-start justify-center px-4 pb-4 pt-24 sm:justify-end sm:px-8 sm:pb-10 sm:pt-24">
+				<div className="grid w-full max-w-xs gap-3 sm:w-80 sm:max-w-sm">
 					{statCards.map((card) => (
 						<section
 							key={card.label}
@@ -67,14 +42,7 @@ export const AvatarStatsOverlay = () => {
 								<div className="mt-4 h-2 overflow-hidden rounded-full bg-white/35">
 									<div
 										className="h-full rounded-full bg-slate-900/75"
-										style={{
-											width:
-												card.label === 'Movement'
-													? '78%'
-													: card.label === 'Sleep'
-														? '84%'
-														: '72%',
-										}}
+										style={{ width: `${Math.round(card.progress * 100)}%` }}
 									/>
 								</div>
 
