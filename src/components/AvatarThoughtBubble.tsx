@@ -10,7 +10,8 @@ export default function AvatarThoughtBubble({
   message,
   isLoading,
 }: AvatarThoughtBubbleProps) {
-  const [isCompact, setIsCompact] = useState(false)
+  const [isCompact, setIsCompact] = useState(true)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -19,7 +20,7 @@ export default function AvatarThoughtBubble({
 
     const mediaQuery = window.matchMedia('(max-width: 639px)')
     const syncCompactState = () => {
-      setIsCompact(mediaQuery.matches)
+      setIsMobileViewport(mediaQuery.matches)
     }
 
     syncCompactState()
@@ -30,13 +31,18 @@ export default function AvatarThoughtBubble({
     }
   }, [])
 
+  const messageBody = isLoading
+    ? 'Thinking through your recent trend...'
+    : message?.body ??
+      'I am here with a gentle reflection once your health signals arrive.'
+
   if (isCompact) {
     return (
       <div className="pointer-events-auto relative">
         <button
           type="button"
           onClick={() => setIsCompact(false)}
-          className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/90 px-3 py-2 text-left shadow-[0_16px_32px_-16px_rgba(15,23,42,0.45)] backdrop-blur transition hover:bg-white"
+          className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/90 px-3 py-2 text-left shadow-[0_14px_30px_-18px_rgba(15,23,42,0.4)] backdrop-blur transition hover:bg-white"
         >
           <span className="grid h-8 w-8 place-items-center rounded-full bg-emerald-100 text-emerald-700">
             <svg
@@ -54,27 +60,26 @@ export default function AvatarThoughtBubble({
           </span>
         </button>
 
-        <div className="absolute left-6 top-full flex translate-y-1 items-end gap-1">
-          <span className="h-3 w-3 rounded-full border border-white/70 bg-white/85 shadow-sm" />
-          <span className="mb-[-12px] h-2 w-2 rounded-full border border-white/70 bg-white/80 shadow-sm" />
-        </div>
+        {!isMobileViewport ? (
+          <div className="absolute left-6 top-full flex translate-y-1 items-end gap-1">
+            <span className="h-3 w-3 rounded-full border border-white/70 bg-white/85 shadow-sm" />
+            <span className="mb-[-12px] h-2 w-2 rounded-full border border-white/70 bg-white/80 shadow-sm" />
+          </div>
+        ) : null}
       </div>
     )
   }
 
   return (
-    <div className="pointer-events-auto relative max-w-[min(20rem,calc(100vw-2rem))] animate-bubble-float">
-      <section className="rounded-[28px] border border-white/80 bg-white/92 p-4 shadow-[0_24px_60px_-28px_rgba(15,23,42,0.55)] backdrop-blur">
-        <div className="flex items-start justify-between gap-3">
-          <div>
+    <div className="pointer-events-auto relative w-[min(18rem,calc(100vw-2rem))] sm:w-[18.5rem]">
+      <section className="rounded-[24px] border border-white/82 bg-white/90 p-3.5 shadow-[0_18px_38px_-24px_rgba(15,23,42,0.45)] backdrop-blur-xl">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
             <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-emerald-700">
               {message?.toneLabel ?? 'Future self'}
             </p>
-            <p className="mt-2 text-sm font-medium leading-6 text-slate-700">
-              {isLoading
-                ? 'Thinking through your recent trend...'
-                : message?.body ??
-                  'I am here with a gentle reflection once your health signals arrive.'}
+            <p className="mt-2 max-h-24 overflow-y-auto pr-1 text-sm font-medium leading-5 text-slate-700 sm:max-h-28">
+              {messageBody}
             </p>
           </div>
 
@@ -82,7 +87,7 @@ export default function AvatarThoughtBubble({
             type="button"
             onClick={() => setIsCompact(true)}
             aria-label="Collapse future self message"
-            className="rounded-full border border-slate-200 px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-slate-500 transition hover:bg-slate-50"
+            className="shrink-0 rounded-full border border-slate-200 px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-slate-500 transition hover:bg-slate-50"
           >
             Hide
           </button>
@@ -95,10 +100,12 @@ export default function AvatarThoughtBubble({
         ) : null}
       </section>
 
-      <div className="absolute left-10 top-full flex translate-y-1 items-end gap-1">
-        <span className="h-4 w-4 rounded-full border border-white/80 bg-white/90 shadow-sm" />
-        <span className="mb-[-16px] h-2.5 w-2.5 rounded-full border border-white/75 bg-white/85 shadow-sm" />
-      </div>
+      {!isMobileViewport ? (
+        <div className="absolute left-8 top-full flex translate-y-1 items-end gap-1">
+          <span className="h-3.5 w-3.5 rounded-full border border-white/80 bg-white/90 shadow-sm" />
+          <span className="mb-[-14px] h-2 w-2 rounded-full border border-white/75 bg-white/85 shadow-sm" />
+        </div>
+      ) : null}
     </div>
   )
 }

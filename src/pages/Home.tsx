@@ -94,18 +94,20 @@ export default function Home() {
         <AvatarCanvas />
       </Canvas>
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 px-4 pt-20 sm:px-8 sm:pt-24">
-        <div className="mx-auto flex w-full max-w-6xl flex-col items-center gap-3 sm:relative sm:min-h-[12rem]">
-          <div className="flex w-full justify-center sm:justify-end">
-            <AvatarStatsOverlay systemBars={systemBars} />
-          </div>
-
-          <div className="flex w-full justify-center sm:absolute sm:left-1/2 sm:top-14 sm:w-auto sm:-translate-x-[14rem] sm:justify-start">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 px-4 pt-20 sm:px-6 sm:pt-24">
+        <div className="mx-auto flex w-full max-w-6xl justify-start">
+          <div className="flex w-full justify-start">
             <AvatarThoughtBubble
               message={thoughtBubbleMessage}
               isLoading={isLoadingMessage}
             />
           </div>
+        </div>
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 px-4 sm:bottom-[5.5rem] sm:px-6">
+        <div className="mx-auto flex w-full max-w-[38rem] justify-center">
+          <AvatarStatsOverlay systemBars={systemBars} />
         </div>
       </div>
     </div>
