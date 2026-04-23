@@ -12,6 +12,12 @@ export default function OrganDetail() {
   const organKey =
     (organId && organId in ORGAN_METADATA ? (organId as OrganKey) : undefined) ?? 'heart'
   const organ = organSummaries[organKey]
+  const latestDeltaText =
+    Math.abs(organ.latestDelta) < 0.05
+      ? 'No major change from the last check-in.'
+      : `Last check-in ${
+          organ.latestDelta > 0 ? 'supported' : 'strained'
+        } this organ by about ${Math.abs(organ.latestDelta).toFixed(1)} points.`
 
   return (
     <div className="space-y-8">
@@ -32,6 +38,9 @@ export default function OrganDetail() {
             barClassName="bg-gradient-to-r from-emerald-400 to-emerald-600"
           />
         </div>
+        <p className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+          {latestDeltaText}
+        </p>
         <p className="mt-3 text-sm text-slate-600">{organ.explanation}</p>
       </section>
 

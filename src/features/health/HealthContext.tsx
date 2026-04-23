@@ -11,12 +11,15 @@ import {
 import { ORGAN_METADATA } from '../../data/organs'
 import {
   applyActivityEvents,
+  buildImpactNarrative,
   buildLocalExplanation,
   createInitialOrganStates,
   getTopNegativeContributors,
   getTopPositiveContributors,
+  summarizeContributionsByOrgan,
   type ActivityContribution,
   type ActivityEvent,
+  type OrganImpactSummary,
   type OrganKey,
   type OrganStates,
   type StreakState,
@@ -62,6 +65,7 @@ type OrganSummary = {
   name: string
   score: number
   progress: number
+  latestDelta: number
   explanation: string
   helps: string[]
   history: OrganHistoryItem[]
@@ -70,6 +74,8 @@ type OrganSummary = {
 type HealthContextValue = PersistedHealthState & {
   overallScore: number
   statCards: HealthStatCard[]
+  latestImpactNarrative: string | null
+  latestImpactSummary: OrganImpactSummary[]
   organSummaries: Record<OrganKey, OrganSummary>
   logActivities: (events: ActivityEvent[]) => void
   resetHealthState: () => void
@@ -195,6 +201,14 @@ export function HealthProvider({ children }: { children: ReactNode }) {
     const recentEvents = state.logEntries
       .slice(0, RECENT_ENTRY_COUNT)
       .flatMap((entry) => entry.events)
+    const latestImpactSummary = summarizeContributionsByOrgan(
+      state.logEntries[0]?.contributions ?? [],
+      4,
+    )
+    const latestImpactNarrative = buildImpactNarrative(latestImpactSummary)
+    const latestImpactByOrgan = new Map(
+      latestImpactSummary.map((impact) => [impact.organ, impact.scoreDelta]),
+    )
 
     const organSummaries = Object.keys(ORGAN_METADATA).reduce(
       (accumulator, organKey) => {
@@ -213,7 +227,9 @@ export function HealthProvider({ children }: { children: ReactNode }) {
           .flatMap((entry) =>
             entry.contributions
               .filter((contribution) => contribution.organ === organ)
-              .map((contribution, index) => buildHistoryItem(organ, contribution, entry, index)),
+              .map((contribution, index) =>
+                buildHistoryItem(organ, contribution, entry, index),
+              ),
           )
           .slice(0, 6)
 
@@ -221,6 +237,7 @@ export function HealthProvider({ children }: { children: ReactNode }) {
           name: ORGAN_METADATA[organ].name,
           score: stateForOrgan.score,
           progress: normalizeScore(stateForOrgan.score),
+          latestDelta: latestImpactByOrgan.get(organ) ?? 0,
           explanation,
           helps: ORGAN_METADATA[organ].helps,
           history,
@@ -296,6 +313,8 @@ export function HealthProvider({ children }: { children: ReactNode }) {
       ...state,
       overallScore,
       statCards,
+      latestImpactNarrative,
+      latestImpactSummary,
       organSummaries,
       logActivities: (events: ActivityEvent[]) => {
         setState((current) => {
