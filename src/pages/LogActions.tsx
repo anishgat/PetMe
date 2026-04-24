@@ -6,98 +6,14 @@ import {
   buildImpactNarrative,
   summarizeContributionsByOrgan,
 } from '../features/health'
+import {
+  buildEvents,
+  DIET_OPTIONS,
+  INITIAL_LOG_VALUES,
+  LOG_DOMAIN_LABELS,
+  LOG_DOMAIN_ORDER,
+} from '../features/health/logging'
 import { useHealth } from '../features/health/HealthContext'
-import type { ActivityEvent } from '../features/health/model/types'
-
-type MealType =
-  | 'none'
-  | 'healthy_meal'
-  | 'balanced_meal'
-  | 'processed_food'
-  | 'high_sugar_meal'
-  | 'high_sat_fat_meal'
-  | 'protein_rich_meal'
-  | 'fiber_rich_meal'
-
-type WizardState = {
-  sleepDuration: number
-  sleepQuality: number
-  wakeFeeling: number
-  stressLevel: number
-  walkingSteps: number
-  cardioMinutes: number
-  strengthMinutes: number
-  socialMoments: number
-  mealType: MealType
-  alcoholDrinks: number
-  smokingCigarettes: number
-}
-
-const INITIAL_STATE: WizardState = {
-  sleepDuration: 7,
-  sleepQuality: 3,
-  wakeFeeling: 3,
-  stressLevel: 4,
-  walkingSteps: 5000,
-  cardioMinutes: 0,
-  strengthMinutes: 0,
-  socialMoments: 1,
-  mealType: 'balanced_meal',
-  alcoholDrinks: 0,
-  smokingCigarettes: 0,
-}
-
-const STEPS = [
-  'Sleep',
-  'Stress',
-  'Movement',
-  'Social',
-  'Diet',
-  'Substances',
-] as const
-
-const DIET_OPTIONS: Array<{ value: MealType; label: string; hint: string }> = [
-  {
-    value: 'healthy_meal',
-    label: 'Fresh & whole',
-    hint: 'Mostly whole foods and balanced ingredients.',
-  },
-  {
-    value: 'balanced_meal',
-    label: 'Balanced',
-    hint: 'A typical decent meal with some variety.',
-  },
-  {
-    value: 'protein_rich_meal',
-    label: 'Protein focused',
-    hint: 'Extra protein intake today.',
-  },
-  {
-    value: 'fiber_rich_meal',
-    label: 'Fiber focused',
-    hint: 'Vegetables, legumes, or high-fiber foods.',
-  },
-  {
-    value: 'processed_food',
-    label: 'Mostly processed',
-    hint: 'Packaged or highly processed food.',
-  },
-  {
-    value: 'high_sugar_meal',
-    label: 'High sugar',
-    hint: 'Sugar-heavy eating pattern today.',
-  },
-  {
-    value: 'high_sat_fat_meal',
-    label: 'High saturated fat',
-    hint: 'Heavier saturated fat intake today.',
-  },
-  {
-    value: 'none',
-    label: 'Skip diet for now',
-    hint: 'No diet tag for this check-in.',
-  },
-]
 
 function clampPercent(value: number) {
   return Math.min(100, Math.max(0, Math.round(value)))
@@ -111,129 +27,6 @@ function formatTimestamp(timestamp?: string) {
     hour: 'numeric',
     minute: '2-digit',
   })
-}
-
-function buildEvents(values: WizardState): ActivityEvent[] {
-  const events: ActivityEvent[] = []
-  const addEvent = (event: ActivityEvent | null) => {
-    if (event) events.push(event)
-  }
-
-  const sleepModifier = 0.8 + ((values.sleepQuality + values.wakeFeeling) / 10) * 0.4
-  const effectiveSleep = Math.min(12, Math.max(0, values.sleepDuration * sleepModifier))
-  if (effectiveSleep > 0) {
-    addEvent({
-      type: 'sleep',
-      amount: Number(effectiveSleep.toFixed(1)),
-      unit: 'hour',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  if (values.stressLevel > 0) {
-    addEvent({
-      type: 'stress',
-      amount: values.stressLevel,
-      unit: 'level_10',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  if (values.walkingSteps > 0) {
-    addEvent({
-      type: 'walking',
-      amount: values.walkingSteps,
-      unit: 'steps',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  if (values.cardioMinutes > 0) {
-    addEvent({
-      type: 'cardio',
-      amount: values.cardioMinutes,
-      unit: 'minute',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  if (values.strengthMinutes > 0) {
-    addEvent({
-      type: 'strength',
-      amount: values.strengthMinutes,
-      unit: 'minute',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  if (
-    values.walkingSteps < 2500 &&
-    values.cardioMinutes === 0 &&
-    values.strengthMinutes === 0
-  ) {
-    addEvent({
-      type: 'sedentary_day',
-      amount: 1,
-      unit: 'count',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  if (values.socialMoments > 0) {
-    addEvent({
-      type: 'social_connection',
-      amount: values.socialMoments,
-      unit: 'count',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  if (values.mealType !== 'none') {
-    addEvent({
-      type: values.mealType,
-      amount: 1,
-      unit: 'meal',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  if (values.alcoholDrinks >= 5) {
-    addEvent({
-      type: 'alcohol_heavy_intake',
-      amount: values.alcoholDrinks,
-      unit: 'drink',
-      source: 'manual',
-      confidence: 1,
-    })
-  } else if (values.alcoholDrinks > 0) {
-    addEvent({
-      type: 'alcohol',
-      amount: values.alcoholDrinks,
-      unit: 'drink',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  if (values.smokingCigarettes > 0) {
-    addEvent({
-      type: 'smoking',
-      amount: values.smokingCigarettes,
-      unit: 'cigarette',
-      source: 'manual',
-      confidence: 1,
-    })
-  }
-
-  return events
 }
 
 type StepCardProps = {
@@ -251,12 +44,13 @@ function StepCard({ children }: StepCardProps) {
 export default function LogActions() {
   const { logActivities, logEntries, organStates, overallScore, streaks } = useHealth()
   const [stepIndex, setStepIndex] = useState(0)
-  const [values, setValues] = useState(INITIAL_STATE)
+  const [values, setValues] = useState(INITIAL_LOG_VALUES)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
   const [savedEventCount, setSavedEventCount] = useState(0)
 
   const latestEntry = logEntries[0]
-  const totalSteps = STEPS.length
+  const currentStep = LOG_DOMAIN_ORDER[stepIndex]
+  const totalSteps = LOG_DOMAIN_ORDER.length
   const isLastStep = stepIndex === totalSteps - 1
   const progressPercent = clampPercent(((stepIndex + 1) / totalSteps) * 100)
   const draftEvents = useMemo(() => buildEvents(values), [values])
@@ -289,7 +83,7 @@ export default function LogActions() {
         : 'Check-in saved. Your organ model has been updated.',
     )
     setStepIndex(0)
-    setValues(INITIAL_STATE)
+    setValues(INITIAL_LOG_VALUES)
   }
 
   const summary = useMemo(
@@ -351,7 +145,9 @@ export default function LogActions() {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
             Step {stepIndex + 1} of {totalSteps}
           </p>
-          <p className="text-sm font-semibold text-slate-700">{STEPS[stepIndex]}</p>
+          <p className="text-sm font-semibold text-slate-700">
+            {LOG_DOMAIN_LABELS[currentStep]}
+          </p>
         </div>
         <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
           <div
@@ -361,7 +157,7 @@ export default function LogActions() {
         </div>
       </section>
 
-      {stepIndex === 0 ? (
+      {currentStep === 'sleep' ? (
         <StepCard>
           <h2 className="text-base font-semibold text-slate-900">Sleep</h2>
           <p className="mt-1 text-sm text-slate-600">
@@ -427,7 +223,7 @@ export default function LogActions() {
         </StepCard>
       ) : null}
 
-      {stepIndex === 1 ? (
+      {currentStep === 'mood' ? (
         <StepCard>
           <h2 className="text-base font-semibold text-slate-900">Stress and mood</h2>
           <p className="mt-1 text-sm text-slate-600">
@@ -454,7 +250,7 @@ export default function LogActions() {
         </StepCard>
       ) : null}
 
-      {stepIndex === 2 ? (
+      {currentStep === 'movement' ? (
         <StepCard>
           <h2 className="text-base font-semibold text-slate-900">Movement and exercise</h2>
           <p className="mt-1 text-sm text-slate-600">
@@ -513,7 +309,7 @@ export default function LogActions() {
         </StepCard>
       ) : null}
 
-      {stepIndex === 3 ? (
+      {currentStep === 'social' ? (
         <StepCard>
           <h2 className="text-base font-semibold text-slate-900">Social interaction</h2>
           <p className="mt-1 text-sm text-slate-600">
@@ -538,7 +334,7 @@ export default function LogActions() {
         </StepCard>
       ) : null}
 
-      {stepIndex === 4 ? (
+      {currentStep === 'diet' ? (
         <StepCard>
           <h2 className="text-base font-semibold text-slate-900">Quality of diet</h2>
           <p className="mt-1 text-sm text-slate-600">
@@ -569,7 +365,7 @@ export default function LogActions() {
         </StepCard>
       ) : null}
 
-      {stepIndex === 5 ? (
+      {currentStep === 'substances' ? (
         <StepCard>
           <h2 className="text-base font-semibold text-slate-900">Substances (optional)</h2>
           <p className="mt-1 text-sm text-slate-600">

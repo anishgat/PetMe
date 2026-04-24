@@ -67,7 +67,7 @@ export default function App() {
 				</Routes>
 			</main>
 
-			{!isLogPage && (
+			{!isLogPage && !isHomePage && (
 				<div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center px-4 pb-[env(safe-area-inset-bottom)] sm:bottom-6">
 					<Link
 						to="/log"
