@@ -58,3 +58,47 @@ User log:
 """${userText}"""
 `.trim();
 }
+
+type FutureSelfMessagePromptInput = {
+  toneLabel: string
+  trendDirection: 'improving' | 'steady' | 'strained'
+  timeAnchor: string
+  overallScore: number
+  recentWin: string
+  recentStrain?: string
+  focusSystem: string
+  suggestedNextStep: string
+}
+
+export const FUTURE_SELF_MESSAGE_PROMPT = `
+You write a short thought-bubble message for a future-self health companion app.
+
+Rules:
+- Return plain text only.
+- Write in first-person future-self POV.
+- Sound warm, encouraging, and personal.
+- Mention one concrete recent win and one gentle next step.
+- If a recent strain is present, acknowledge it softly without shame.
+- No diagnosis, fear, or scolding.
+- Maximum 2 sentences.
+- Aim for about 180 characters.
+`.trim()
+
+export function buildFutureSelfMessagePrompt(
+  input: FutureSelfMessagePromptInput,
+): string {
+  return `
+${FUTURE_SELF_MESSAGE_PROMPT}
+
+Tone label: ${input.toneLabel}
+Trend direction: ${input.trendDirection}
+Time anchor: ${input.timeAnchor}
+Overall score: ${input.overallScore.toFixed(1)}
+Recent win: ${input.recentWin}
+Recent strain: ${input.recentStrain ?? 'None'}
+Focus system: ${input.focusSystem}
+Gentle next step: ${input.suggestedNextStep}
+
+Return the thought-bubble text only.
+`.trim()
+}
