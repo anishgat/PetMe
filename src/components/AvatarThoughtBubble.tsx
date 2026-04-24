@@ -31,10 +31,14 @@ export default function AvatarThoughtBubble({
     }
   }, [])
 
-  const messageBody = isLoading
-    ? 'Thinking through your recent trend...'
-    : message?.body ??
-      'I am here with a gentle reflection once your health signals arrive.'
+  const messageBody =
+    message?.body ??
+    (isLoading
+      ? 'Thinking through your recent trend...'
+      : 'I am here with a gentle reflection once your health signals arrive.')
+
+  const toneLabel =
+    message?.toneLabel ?? (isLoading ? 'Reflecting' : 'Future self')
 
   if (isCompact) {
     return (
@@ -76,11 +80,16 @@ export default function AvatarThoughtBubble({
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-emerald-700">
-              {message?.toneLabel ?? 'Future self'}
+              {toneLabel}
             </p>
             <p className="mt-2 max-h-24 overflow-y-auto pr-1 text-sm font-medium leading-5 text-slate-700 sm:max-h-28">
               {messageBody}
             </p>
+            {isLoading && message ? (
+              <p className="mt-3 text-xs text-slate-500">
+                Refreshing from your latest check-in...
+              </p>
+            ) : null}
           </div>
 
           <button
@@ -92,12 +101,6 @@ export default function AvatarThoughtBubble({
             Hide
           </button>
         </div>
-
-        {message?.placeholder ? (
-          <p className="mt-3 text-xs text-slate-500">
-            Placeholder POV message. This can plug into LLM trend analysis later.
-          </p>
-        ) : null}
       </section>
 
       {!isMobileViewport ? (

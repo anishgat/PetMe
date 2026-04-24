@@ -4,38 +4,28 @@ import { AvatarCanvas, type HomeSystemBar } from '../components/AvatarCanvas'
 import { AvatarStatsOverlay } from '../components/AvatarStatsOverlay'
 import AvatarThoughtBubble from '../components/AvatarThoughtBubble'
 import { useHealth } from '../features/health/HealthContext'
-import type { OrganKey } from '../features/health/model/types'
 import {
+  FUTURE_SELF_SYSTEM_GROUPS,
   generateFutureSelfMessage,
   type FutureSelfMessage,
 } from '../features/messages/futureSelfMessageService'
 
-const SYSTEM_GROUPS: Array<{
-  id: HomeSystemBar['id']
-  label: string
-  organs: OrganKey[]
-}> = [
-  { id: 'cardio', label: 'Cardio', organs: ['heart', 'lungs'] },
-  { id: 'brain', label: 'Cognitive', organs: ['brain'] },
-  {
-    id: 'digestive',
-    label: 'Digestive',
-    organs: ['liver', 'stomach', 'intestines'],
-  },
-  { id: 'renal', label: 'Renal', organs: ['kidneys'] },
-  { id: 'mobility', label: 'Mobility', organs: ['bones'] },
-]
-
 export default function Home() {
-  const { latestImpactNarrative, logEntries, organSummaries, overallScore } =
-    useHealth()
+  const {
+    latestImpactNarrative,
+    latestImpactSummary,
+    logEntries,
+    organSummaries,
+    overallScore,
+    streaks,
+  } = useHealth()
   const [thoughtBubbleMessage, setThoughtBubbleMessage] =
     useState<FutureSelfMessage | null>(null)
   const [isLoadingMessage, setIsLoadingMessage] = useState(false)
 
   const systemBars = useMemo<HomeSystemBar[]>(
     () =>
-      SYSTEM_GROUPS.map((group) => {
+      FUTURE_SELF_SYSTEM_GROUPS.map((group) => {
         const total = group.organs.reduce(
           (sum, organ) => sum + organSummaries[organ].progress,
           0,
@@ -50,30 +40,80 @@ export default function Home() {
     [organSummaries],
   )
 
+  const systemSnapshots = useMemo(
+    () =>
+      systemBars.map((system) => ({
+        id: system.id,
+        label: system.label,
+        score: Math.round(system.progress * 100),
+      })),
+    [systemBars],
+  )
+
+  const latestLogEntryId = logEntries[0]?.id ?? 'empty'
+
+  const messageSignature = useMemo(
+    () =>
+      [
+        latestLogEntryId,
+        overallScore.toFixed(1),
+        systemSnapshots.map((system) => `${system.id}:${system.score}`).join('|'),
+      ].join('::'),
+    [latestLogEntryId, overallScore, systemSnapshots],
+  )
+
+  const messageContext = useMemo(
+    () => ({
+      overallScore,
+      latestImpactNarrative,
+      recentCheckInCount: logEntries.length,
+      latestCheckInAt: logEntries[0]?.timestamp,
+      logEntries,
+      streaks,
+      latestImpactSummary,
+      systems: systemSnapshots,
+    }),
+    [
+      latestImpactNarrative,
+      latestImpactSummary,
+      logEntries,
+      overallScore,
+      streaks,
+      systemSnapshots,
+    ],
+  )
+
   useEffect(() => {
     let isCancelled = false
 
     const loadMessage = async () => {
       setIsLoadingMessage(true)
 
-      const message = await generateFutureSelfMessage({
-        overallScore,
-        latestImpactNarrative,
-        recentCheckInCount: logEntries.length,
-        latestCheckInAt: logEntries[0]?.timestamp,
-        systems: systemBars.map((system) => ({
-          id: system.id,
-          label: system.label,
-          score: Math.round(system.progress * 100),
-        })),
-      })
+      try {
+        const message = await generateFutureSelfMessage(messageContext)
 
-      if (isCancelled) {
-        return
+        if (isCancelled) {
+          return
+        }
+
+        setThoughtBubbleMessage(message)
+      } catch (error) {
+        console.error('Failed to generate future self message.', error)
+
+        if (isCancelled) {
+          return
+        }
+
+        setThoughtBubbleMessage({
+          body: 'I am still here with you. One gentle check-in at a time is enough for me to reflect something useful back.',
+          toneLabel: 'Fallback',
+          source: 'fallback',
+        })
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingMessage(false)
+        }
       }
-
-      setThoughtBubbleMessage(message)
-      setIsLoadingMessage(false)
     }
 
     void loadMessage()
@@ -81,7 +121,7 @@ export default function Home() {
     return () => {
       isCancelled = true
     }
-  }, [latestImpactNarrative, logEntries, overallScore, systemBars])
+  }, [messageContext, messageSignature])
 
   return (
     <div className="relative h-svh w-full overflow-hidden">
