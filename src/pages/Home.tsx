@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
+import { Link } from 'react-router-dom';
 import { AvatarCanvas, type HomeSystemBar } from '../components/AvatarCanvas';
 import { HomeLogModal } from '../components/HomeLogModal';
 import { HomeLogWidgets } from '../components/HomeLogWidgets';
-import { AvatarStatsOverlay } from '../components/AvatarStatsOverlay';
 import AvatarThoughtBubble from '../components/AvatarThoughtBubble';
 import { useHealth } from '../features/health/HealthContext';
 import type { LogDomain } from '../features/health/logging';
@@ -151,11 +151,26 @@ export default function Home() {
 
 			<HomeLogWidgets onSelect={setActiveLogDomain} />
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+7.75rem)] z-40 px-4 sm:bottom-[8.5rem] sm:px-6">
-        <div className="mx-auto flex w-full max-w-[38rem] justify-center">
-          <AvatarStatsOverlay systemBars={systemBars} />
-        </div>
-      </div>
+			<div className="pointer-events-none absolute inset-x-0 top-28 bottom-44 z-20 flex justify-center px-6 sm:top-32 sm:bottom-36">
+				<Link
+					to="/organs"
+					aria-label="Open full body stats"
+					className="pointer-events-auto flex w-full max-w-[22rem] items-end justify-center rounded-[2rem] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-600"
+				>
+					<span className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/84 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-emerald-800 shadow-[0_18px_32px_-24px_rgba(15,23,42,0.7)] backdrop-blur sm:mb-10">
+						Tap avatar for full body stats
+						<svg
+							viewBox="0 0 24 24"
+							className="h-4 w-4"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="1.8"
+						>
+							<path d="M5 12h14m-6-6 6 6-6 6" />
+						</svg>
+					</span>
+				</Link>
+			</div>
 
 			{activeLogDomain ? (
 				<HomeLogModal
