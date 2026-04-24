@@ -7,6 +7,7 @@ import {
 	faPen,
 	faUtensils,
 } from '@fortawesome/free-solid-svg-icons';
+import type { LogDomain } from '../features/health/logging';
 
 type FontAwesomeDefinition = {
 	icon: [number, number, unknown, unknown, string | string[]];
@@ -37,16 +38,14 @@ function FontAwesomeGlyph({
 }
 
 type HomeLogWidget = {
-	id: string;
+	id: LogDomain;
 	label: string;
 	angle: number;
 	toneClassName: string;
 	icon: ReactNode;
 };
 
-const HOLD_DELAY_MS = 180;
 const RADIAL_DISTANCE = 70;
-const HIT_DISTANCE = 34;
 
 const HOME_LOG_WIDGETS: HomeLogWidget[] = [
 	{
@@ -112,13 +111,14 @@ function getOffset(angle: number) {
 	};
 }
 
-export function HomeLogWidgets() {
-	const buttonRef = useRef<HTMLButtonElement | null>(null);
-	const holdTimerRef = useRef<number | null>(null);
-	const pointerRef = useRef<{ x: number; y: number } | null>(null);
-	const activePointerIdRef = useRef<number | null>(null);
+export function HomeLogWidgets({
+	onSelect,
+}: {
+	onSelect: (domain: LogDomain) => void;
+}) {
+	const containerRef = useRef<HTMLDivElement | null>(null);
 	const [isExpanded, setIsExpanded] = useState(false);
-	const [activeWidgetId, setActiveWidgetId] = useState<string | null>(null);
+	const [activeWidgetId, setActiveWidgetId] = useState<LogDomain | null>(null);
 
 	const widgetPositions = useMemo(
 		() =>
@@ -132,120 +132,52 @@ export function HomeLogWidgets() {
 	const activeWidget =
 		widgetPositions.find((widget) => widget.id === activeWidgetId) ?? null;
 
-	const clearHoldTimer = useCallback(() => {
-		if (holdTimerRef.current != null) {
-			window.clearTimeout(holdTimerRef.current);
-			holdTimerRef.current = null;
-		}
-	}, []);
-
-	const updateActiveWidget = useCallback(
-		(clientX: number, clientY: number) => {
-			pointerRef.current = { x: clientX, y: clientY };
-
-			if (!isExpanded || buttonRef.current == null) {
-				return;
-			}
-
-			const rect = buttonRef.current.getBoundingClientRect();
-			const centerX = rect.left + rect.width / 2;
-			const centerY = rect.top + rect.height / 2;
-
-			let nextActive: string | null = null;
-			let nearestDistance = Number.POSITIVE_INFINITY;
-
-			widgetPositions.forEach((widget) => {
-				const dx = clientX - (centerX + widget.x);
-				const dy = clientY - (centerY + widget.y);
-				const distance = Math.hypot(dx, dy);
-
-				if (distance < HIT_DISTANCE && distance < nearestDistance) {
-					nextActive = widget.id;
-					nearestDistance = distance;
-				}
-			});
-
-			setActiveWidgetId(nextActive);
-		},
-		[isExpanded, widgetPositions],
-	);
-
 	const collapseMenu = useCallback(() => {
-		clearHoldTimer();
 		setIsExpanded(false);
 		setActiveWidgetId(null);
-		pointerRef.current = null;
-	}, [clearHoldTimer]);
+	}, []);
 
 	useEffect(() => {
-		return () => {
-			clearHoldTimer();
-		};
-	}, [clearHoldTimer]);
-
-	useEffect(() => {
-		const handleWindowPointerMove = (event: PointerEvent) => {
-			if (
-				activePointerIdRef.current == null ||
-				event.pointerId !== activePointerIdRef.current
-			) {
-				return;
-			}
-
-			updateActiveWidget(event.clientX, event.clientY);
-		};
-
-		const handleWindowPointerEnd = (event: PointerEvent) => {
-			if (
-				activePointerIdRef.current == null ||
-				event.pointerId !== activePointerIdRef.current
-			) {
-				return;
-			}
-
-			activePointerIdRef.current = null;
-			collapseMenu();
-		};
-
-		window.addEventListener('pointermove', handleWindowPointerMove);
-		window.addEventListener('pointerup', handleWindowPointerEnd);
-		window.addEventListener('pointercancel', handleWindowPointerEnd);
-
-		return () => {
-			window.removeEventListener('pointermove', handleWindowPointerMove);
-			window.removeEventListener('pointerup', handleWindowPointerEnd);
-			window.removeEventListener('pointercancel', handleWindowPointerEnd);
-		};
-	}, [collapseMenu, updateActiveWidget]);
-
-	const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
-		if (event.button !== 0 && event.pointerType !== 'touch') {
+		if (!isExpanded) {
 			return;
 		}
 
-		event.preventDefault();
-		activePointerIdRef.current = event.pointerId;
-		pointerRef.current = { x: event.clientX, y: event.clientY };
-		clearHoldTimer();
-
-		holdTimerRef.current = window.setTimeout(() => {
-			setIsExpanded(true);
-
-			if (pointerRef.current != null) {
-				updateActiveWidget(pointerRef.current.x, pointerRef.current.y);
+		const handleWindowPointerDown = (event: PointerEvent) => {
+			if (
+				containerRef.current != null &&
+				!containerRef.current.contains(event.target as Node)
+			) {
+				collapseMenu();
 			}
-		}, HOLD_DELAY_MS);
-	};
+		};
 
-	const handlePointerEnd = () => {
-		activePointerIdRef.current = null;
-		collapseMenu();
-	};
+		const handleWindowKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== 'Escape') {
+				return;
+			}
+
+			collapseMenu();
+		};
+
+		window.addEventListener('pointerdown', handleWindowPointerDown);
+		window.addEventListener('keydown', handleWindowKeyDown);
+
+		return () => {
+			window.removeEventListener('pointerdown', handleWindowPointerDown);
+			window.removeEventListener('keydown', handleWindowKeyDown);
+		};
+	}, [collapseMenu, isExpanded]);
 
 	return (
 		<div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.25rem)] z-50 flex justify-center px-4 sm:bottom-6">
-			<div className="pointer-events-auto relative h-[15rem] w-[15rem] touch-none select-none">
-				<div className="absolute bottom-[2.375rem] left-1/2 h-0 w-0 -translate-x-1/2">
+			<div
+				ref={containerRef}
+				className="pointer-events-auto relative h-[15rem] w-[15rem] touch-none select-none"
+			>
+				<div
+					id="home-log-widget-panel"
+					className="absolute bottom-[2.375rem] left-1/2 h-0 w-0 -translate-x-1/2"
+				>
 					<div
 						className={`absolute left-0 top-0 h-[11rem] w-[11rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(16,185,129,0.18)_0%,rgba(255,255,255,0)_68%)] transition duration-300 ${
 							isExpanded ? 'scale-100 opacity-100' : 'scale-75 opacity-0'
@@ -262,14 +194,23 @@ export function HomeLogWidgets() {
 							<button
 								key={widget.id}
 								type="button"
-								disabled
+								onClick={() => {
+									onSelect(widget.id);
+									collapseMenu();
+								}}
+								onMouseEnter={() => setActiveWidgetId(widget.id)}
+								onFocus={() => setActiveWidgetId(widget.id)}
+								onMouseLeave={() => setActiveWidgetId(null)}
+								onBlur={() => setActiveWidgetId(null)}
 								aria-hidden={!isExpanded}
 								aria-label={widget.label}
-								tabIndex={-1}
+								tabIndex={isExpanded ? 0 : -1}
 								className={`absolute left-0 top-0 grid h-12 w-12 place-items-center rounded-full bg-gradient-to-br text-white shadow-[0_18px_30px_-18px_rgba(15,23,42,0.65)] ring-1 ring-white/70 transition-[transform,opacity,box-shadow] duration-200 sm:h-13 sm:w-13 ${
 									widget.toneClassName
 								} ${isActive ? 'shadow-[0_18px_42px_-12px_rgba(15,23,42,0.75)]' : ''} ${
-									isExpanded ? 'opacity-100' : 'opacity-0'
+									isExpanded
+										? 'pointer-events-auto opacity-100'
+										: 'pointer-events-none opacity-0'
 								}`}
 								style={{
 									transform: `translate(calc(-50% + ${widget.x * travel}px), calc(-50% + ${widget.y * travel}px)) scale(${scale})`,
@@ -287,24 +228,31 @@ export function HomeLogWidgets() {
 							isExpanded ? 'opacity-100' : 'opacity-0'
 						}`}
 					>
-						{activeWidget?.label ?? 'Slide to choose'}
+						{activeWidget?.label ?? 'Choose a check-in'}
 					</div>
 				</div>
 
 				<button
-					ref={buttonRef}
 					type="button"
-					onPointerDown={handlePointerDown}
-					onPointerUp={handlePointerEnd}
-					onPointerCancel={handlePointerEnd}
-					onContextMenu={(event) => event.preventDefault()}
-					aria-label="Hold to open logging options"
+					onClick={() => {
+						setIsExpanded((current) => {
+							const nextExpanded = !current;
+
+							if (!nextExpanded) {
+								setActiveWidgetId(null);
+							}
+
+							return nextExpanded;
+						});
+					}}
+					aria-label={isExpanded ? 'Close logging options' : 'Open logging options'}
+					aria-expanded={isExpanded}
+					aria-controls="home-log-widget-panel"
 					className={`absolute bottom-0 left-1/2 flex h-[4.75rem] w-[4.75rem] -translate-x-1/2 touch-none select-none items-center justify-center rounded-full border border-white/85 bg-white/18 text-white shadow-[0_20px_45px_-18px_rgba(5,150,105,0.95)] backdrop-blur-xl transition duration-200 ${
 						isExpanded
 							? 'scale-[1.04] bg-emerald-600/95 ring-8 ring-emerald-300/20'
 							: 'bg-emerald-600/92 hover:bg-emerald-700'
 					}`}
-					style={{ touchAction: 'none' }}
 				>
 					<span className="grid h-10 w-10 place-items-center rounded-full bg-white/18">
 						<FontAwesomeGlyph icon={faPen} className="h-5 w-5" />

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { AvatarCanvas, type HomeSystemBar } from '../components/AvatarCanvas';
+import { HomeLogModal } from '../components/HomeLogModal';
 import { HomeLogWidgets } from '../components/HomeLogWidgets';
 import { AvatarStatsOverlay } from '../components/AvatarStatsOverlay';
 import AvatarThoughtBubble from '../components/AvatarThoughtBubble';
 import { useHealth } from '../features/health/HealthContext';
+import type { LogDomain } from '../features/health/logging';
 import {
 	FUTURE_SELF_SYSTEM_GROUPS,
 	generateFutureSelfMessage,
@@ -23,6 +25,7 @@ export default function Home() {
 	const [thoughtBubbleMessage, setThoughtBubbleMessage] =
 		useState<FutureSelfMessage | null>(null);
 	const [isLoadingMessage, setIsLoadingMessage] = useState(false);
+	const [activeLogDomain, setActiveLogDomain] = useState<LogDomain | null>(null);
 
 	const systemBars = useMemo<HomeSystemBar[]>(
 		() =>
@@ -146,13 +149,21 @@ export default function Home() {
 				</div>
 			</div>
 
-			<HomeLogWidgets />
+			<HomeLogWidgets onSelect={setActiveLogDomain} />
 
       <div className="pointer-events-none absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+7.75rem)] z-40 px-4 sm:bottom-[8.5rem] sm:px-6">
         <div className="mx-auto flex w-full max-w-[38rem] justify-center">
           <AvatarStatsOverlay systemBars={systemBars} />
         </div>
       </div>
+
+			{activeLogDomain ? (
+				<HomeLogModal
+					key={activeLogDomain}
+					domain={activeLogDomain}
+					onClose={() => setActiveLogDomain(null)}
+				/>
+			) : null}
 		</div>
 	);
 }
