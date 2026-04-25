@@ -11,23 +11,45 @@ import {
 import { ORGAN_METADATA } from '../../data/organs'
 import {
   applyActivityEvents,
+  buildProjectionBasisLabel,
   buildImpactNarrative,
   buildLocalExplanation,
+  buildProjectionCycle,
+  createUnavailableFutureProjection,
   createInitialOrganStates,
+  formatProjectionBand,
+  getProjectionCopy,
+  getProjectionMinLogEntries,
   getTopNegativeContributors,
   getTopPositiveContributors,
+  isProjectionAgeValid,
+  rankProjectionLevers,
+  simulateToAge70,
   summarizeContributionsByOrgan,
   type ActivityContribution,
   type ActivityEvent,
+  type OrganFutureProjection,
   type OrganImpactSummary,
   type OrganKey,
   type OrganStates,
   type StreakState,
 } from './index'
+import { buildEvents, type WizardState } from './logging'
 
 const STORAGE_KEY = 'petme-health-store-v1'
-const MAX_LOG_ENTRIES = 48
+const MAX_LOG_ENTRIES = 730
 const RECENT_ENTRY_COUNT = 14
+const OVERVIEW_TREND_WINDOW = 7
+const MIN_TREND_DELTA = 1.5
+const MIN_PROJECTION_LOG_ENTRIES = getProjectionMinLogEntries()
+const SEEDED_HISTORY_DAYS = 365
+const HEALTHY_DEMO_AGE = 31
+const MODERATE_DEMO_AGE = 33
+const UNHEALTHY_DEMO_AGE = 34
+
+export type ProfileState = {
+  currentAge?: number
+}
 
 export type HealthLogEntry = {
   id: string
@@ -36,10 +58,11 @@ export type HealthLogEntry = {
   contributions: ActivityContribution[]
 }
 
-type PersistedHealthState = {
+export type PersistedHealthState = {
   organStates: OrganStates
   streaks: StreakState
   logEntries: HealthLogEntry[]
+  profile: ProfileState
 }
 
 export type OrganHistoryItem = {
@@ -48,6 +71,22 @@ export type OrganHistoryItem = {
   detail: string
   tone: string
   timestamp: string
+}
+
+export type OrganTrendDirection = 'improving' | 'flat' | 'strained'
+
+export type OrganTrendPoint = {
+  id: string
+  score: number
+  timestamp: string
+  label: string
+}
+
+export type OrganTrend = {
+  points: OrganTrendPoint[]
+  delta: number
+  direction: OrganTrendDirection
+  primaryDrivers: string[]
 }
 
 export type HealthStatCard = {
@@ -69,6 +108,15 @@ type OrganSummary = {
   explanation: string
   helps: string[]
   history: OrganHistoryItem[]
+  trend: OrganTrend
+  futureProjection: OrganFutureProjection
+}
+
+type ReplayedEntrySnapshot = {
+  entryId: string
+  timestamp: string
+  organStates: OrganStates
+  contributions: ActivityContribution[]
 }
 
 type HealthContextValue = PersistedHealthState & {
@@ -78,14 +126,247 @@ type HealthContextValue = PersistedHealthState & {
   latestImpactSummary: OrganImpactSummary[]
   organSummaries: Record<OrganKey, OrganSummary>
   logActivities: (events: ActivityEvent[]) => void
+  loadHealthyDemoYear: () => void
+  loadModerateDemoYear: () => void
+  loadUnhealthyDemoYear: () => void
+  setCurrentAge: (age?: number) => void
   resetHealthState: () => void
 }
 
-const createDefaultState = (): PersistedHealthState => ({
+const createEmptyState = (): PersistedHealthState => ({
   organStates: createInitialOrganStates(),
   streaks: {},
   logEntries: [],
+  profile: {},
 })
+
+function createSeedTimestamp(referenceDate: Date, daysAgo: number): string {
+  const date = new Date(referenceDate)
+  date.setHours(12, 0, 0, 0)
+  date.setDate(date.getDate() - daysAgo)
+  return date.toISOString()
+}
+
+function buildHealthySeedValues(timestamp: string, dayIndex: number): WizardState {
+  const date = new Date(timestamp)
+  const weekday = date.getDay()
+  const monthDay = date.getDate()
+  const isWeekend = weekday === 0 || weekday === 6
+  const cardioDay = weekday === 2 || weekday === 4 || weekday === 6
+  const strengthDay = weekday === 1 || weekday === 5
+  const activeRecoveryDay = weekday === 3
+  const indulgentWeekend = isWeekend && dayIndex % 28 === 0
+  const drinkNight = weekday === 5 && dayIndex % 21 === 0
+
+  let mealType: WizardState['mealType'] = 'healthy_meal'
+  if (dayIndex % 17 === 0) {
+    mealType = 'fiber_rich_meal'
+  } else if (dayIndex % 9 === 0) {
+    mealType = 'protein_rich_meal'
+  } else if (activeRecoveryDay || weekday === 1) {
+    mealType = 'balanced_meal'
+  }
+
+  if (indulgentWeekend) {
+    mealType = monthDay % 3 === 0 ? 'high_sugar_meal' : 'processed_food'
+  } else if (dayIndex % 46 === 0) {
+    mealType = 'high_sat_fat_meal'
+  }
+
+  const sleepDuration = isWeekend ? 8.1 : cardioDay ? 7.8 : 7.5
+  const sleepQuality = indulgentWeekend ? 3 : isWeekend ? 5 : 4
+  const wakeFeeling = indulgentWeekend ? 3 : 4
+  const stressLevel = indulgentWeekend ? 5 : weekday === 1 ? 4 : cardioDay ? 2 : 3
+  const walkingSteps = activeRecoveryDay
+    ? 6500
+    : isWeekend
+      ? 9800
+      : cardioDay
+        ? 8800
+        : strengthDay
+          ? 7600
+          : 7000
+  const cardioMinutes = cardioDay ? (weekday === 6 ? 50 : 35) : 0
+  const strengthMinutes = strengthDay ? 40 : 0
+  const socialMoments = isWeekend ? 3 : weekday === 4 || weekday === 5 ? 2 : 1
+  const alcoholDrinks = indulgentWeekend ? 1 : drinkNight ? 2 : 0
+
+  return {
+    sleepDuration,
+    sleepQuality,
+    wakeFeeling,
+    stressLevel,
+    walkingSteps,
+    cardioMinutes,
+    strengthMinutes,
+    socialMoments,
+    mealType,
+    alcoholDrinks,
+    smokingCigarettes: 0,
+  }
+}
+
+function buildUnhealthySeedValues(timestamp: string, dayIndex: number): WizardState {
+  const date = new Date(timestamp)
+  const weekday = date.getDay()
+  const isWeekend = weekday === 0 || weekday === 6
+  const cardioDay = weekday === 2 || dayIndex % 19 === 0
+  const strengthDay = weekday === 6 && dayIndex % 2 === 0
+  const smokeDay = weekday === 5
+  const drinkDay = weekday === 6
+
+  let mealType: WizardState['mealType']
+  if (dayIndex % 9 === 0) {
+    mealType = 'high_sugar_meal'
+  } else if (dayIndex % 5 === 0) {
+    mealType = 'high_sat_fat_meal'
+  } else if (dayIndex % 7 === 0) {
+    mealType = 'balanced_meal'
+  } else {
+    mealType = 'processed_food'
+  }
+
+  const walkingSteps = cardioDay
+    ? 5200
+    : strengthDay
+      ? 4600
+      : isWeekend
+        ? 2800
+        : 1900
+
+  return {
+    sleepDuration: isWeekend ? 6.9 : 6.3,
+    sleepQuality: isWeekend ? 3 : 2,
+    wakeFeeling: isWeekend ? 3 : 2,
+    stressLevel: weekday === 1 ? 6 : 5,
+    walkingSteps,
+    cardioMinutes: cardioDay ? 28 : 0,
+    strengthMinutes: strengthDay ? 24 : 0,
+    socialMoments: isWeekend ? 2 : 1,
+    mealType,
+    alcoholDrinks: drinkDay ? 3 : 0,
+    smokingCigarettes: smokeDay ? 3 : 0,
+  }
+}
+
+function buildModerateSeedValues(timestamp: string, dayIndex: number): WizardState {
+  const date = new Date(timestamp)
+  const weekday = date.getDay()
+  const isWeekend = weekday === 0 || weekday === 6
+  const cardioDay = weekday === 2 || weekday === 5
+  const strengthDay = weekday === 6
+  const activeWalkDay = weekday === 3
+  const smokeDay = weekday === 5 && dayIndex % 14 === 0
+  const drinkDay = weekday === 6 && dayIndex % 10 === 0
+
+  let mealType: WizardState['mealType'] = 'balanced_meal'
+  if (dayIndex % 11 === 0) {
+    mealType = 'healthy_meal'
+  } else if (dayIndex % 8 === 0) {
+    mealType = 'protein_rich_meal'
+  } else if (dayIndex % 6 === 0) {
+    mealType = 'processed_food'
+  }
+
+  if (dayIndex % 27 === 0) {
+    mealType = 'high_sugar_meal'
+  } else if (dayIndex % 31 === 0) {
+    mealType = 'high_sat_fat_meal'
+  }
+
+  const walkingSteps = cardioDay
+    ? 7200
+    : strengthDay
+      ? 6800
+      : activeWalkDay
+        ? 6100
+        : isWeekend
+          ? 4800
+          : 3900
+
+  return {
+    sleepDuration: isWeekend ? 7.4 : 6.9,
+    sleepQuality: isWeekend ? 4 : 3,
+    wakeFeeling: isWeekend ? 4 : 3,
+    stressLevel: weekday === 1 ? 5 : weekday === 4 ? 4 : 3,
+    walkingSteps,
+    cardioMinutes: cardioDay ? 30 : 0,
+    strengthMinutes: strengthDay ? 30 : 0,
+    socialMoments: isWeekend ? 2 : 1,
+    mealType,
+    alcoholDrinks: drinkDay ? 2 : 0,
+    smokingCigarettes: smokeDay ? 2 : 0,
+  }
+}
+
+function createDemoSeededState(
+  profileAge: number,
+  idPrefix: string,
+  buildValues: (timestamp: string, dayIndex: number) => WizardState,
+): PersistedHealthState {
+  const referenceDate = new Date()
+  let organStates = createInitialOrganStates()
+  let streaks: StreakState = {}
+  const chronologicalEntries: HealthLogEntry[] = []
+
+  for (let daysAgo = SEEDED_HISTORY_DAYS - 1; daysAgo >= 0; daysAgo -= 1) {
+    const timestamp = createSeedTimestamp(
+      referenceDate,
+      daysAgo,
+    )
+    const dayIndex = SEEDED_HISTORY_DAYS - 1 - daysAgo
+    const events = buildEvents(buildValues(timestamp, dayIndex)).map(
+      (event) => ({
+        ...event,
+        timestamp,
+      }),
+    )
+    const result = applyActivityEvents(organStates, events, streaks)
+
+    chronologicalEntries.push({
+      id: `${idPrefix}-${timestamp.slice(0, 10)}`,
+      timestamp,
+      events,
+      contributions: result.contributions,
+    })
+
+    organStates = result.organStates
+    streaks = result.streaks
+  }
+
+  return {
+    organStates,
+    streaks,
+    logEntries: chronologicalEntries.reverse(),
+    profile: {
+      currentAge: profileAge,
+    },
+  }
+}
+
+function createHealthySeededState(): PersistedHealthState {
+  return createDemoSeededState(
+    HEALTHY_DEMO_AGE,
+    'healthy-seed',
+    buildHealthySeedValues,
+  )
+}
+
+function createModerateSeededState(): PersistedHealthState {
+  return createDemoSeededState(
+    MODERATE_DEMO_AGE,
+    'moderate-seed',
+    buildModerateSeedValues,
+  )
+}
+
+function createUnhealthySeededState(): PersistedHealthState {
+  return createDemoSeededState(
+    UNHEALTHY_DEMO_AGE,
+    'unhealthy-seed',
+    buildUnhealthySeedValues,
+  )
+}
 
 const HealthContext = createContext<HealthContextValue | null>(null)
 
@@ -96,6 +377,15 @@ function round(value: number, digits = 1): number {
 
 function normalizeScore(score: number): number {
   return Math.max(0, Math.min(1, score / 100))
+}
+
+function sanitizeCurrentAge(age: unknown): number | undefined {
+  if (typeof age !== 'number' || !Number.isFinite(age)) {
+    return undefined
+  }
+
+  const normalized = Math.round(age)
+  return isProjectionAgeValid(normalized) ? normalized : undefined
 }
 
 function prettifyActivityType(activityType: string): string {
@@ -112,6 +402,93 @@ function formatTimestamp(timestamp: string): string {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function classifyTrend(delta: number): OrganTrendDirection {
+  if (delta >= MIN_TREND_DELTA) return 'improving'
+  if (delta <= -MIN_TREND_DELTA) return 'strained'
+  return 'flat'
+}
+
+function computeTrendDelta(points: OrganTrendPoint[], windowSize = OVERVIEW_TREND_WINDOW) {
+  const visiblePoints = points.slice(-windowSize)
+
+  if (visiblePoints.length < 2) {
+    return 0
+  }
+
+  return round(
+    visiblePoints[visiblePoints.length - 1].score - visiblePoints[0].score,
+  )
+}
+
+function replayLogEntries(logEntries: HealthLogEntry[]): ReplayedEntrySnapshot[] {
+  const orderedEntries = [...logEntries].reverse()
+  const snapshots: ReplayedEntrySnapshot[] = []
+  let organStates = createInitialOrganStates()
+  let streaks: StreakState = {}
+
+  for (const entry of orderedEntries) {
+    const result = applyActivityEvents(organStates, entry.events, streaks)
+
+    snapshots.push({
+      entryId: entry.id,
+      timestamp: entry.timestamp,
+      organStates: result.organStates,
+      contributions: result.contributions,
+    })
+
+    organStates = result.organStates
+    streaks = result.streaks
+  }
+
+  return snapshots
+}
+
+function summarizePrimaryDrivers(
+  organ: OrganKey,
+  snapshots: ReplayedEntrySnapshot[],
+  direction: OrganTrendDirection,
+  limit = 2,
+) {
+  const contributions = snapshots.flatMap((snapshot) =>
+    snapshot.contributions.filter((contribution) => contribution.organ === organ),
+  )
+
+  if (contributions.length === 0) {
+    return []
+  }
+
+  let filtered = contributions
+
+  if (direction === 'improving') {
+    filtered = contributions.filter(
+      (contribution) => contribution.netScoreEffectEstimate > 0,
+    )
+  } else if (direction === 'strained') {
+    filtered = contributions.filter(
+      (contribution) => contribution.netScoreEffectEstimate < 0,
+    )
+  }
+
+  if (filtered.length === 0) {
+    filtered = contributions
+  }
+
+  const totals = new Map<ActivityContribution['activityType'], number>()
+
+  for (const contribution of filtered) {
+    const current = totals.get(contribution.activityType) ?? 0
+    totals.set(
+      contribution.activityType,
+      current + Math.abs(contribution.netScoreEffectEstimate),
+    )
+  }
+
+  return Array.from(totals.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, limit)
+    .map(([activityType]) => prettifyActivityType(activityType))
 }
 
 function sumActivity(events: ActivityEvent[], type: ActivityEvent['type']): number {
@@ -159,12 +536,12 @@ function buildHistoryItem(
 
 function loadPersistedState(): PersistedHealthState {
   if (typeof window === 'undefined') {
-    return createDefaultState()
+    return createEmptyState()
   }
 
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return createDefaultState()
+    if (!raw) return createHealthySeededState()
 
     const parsed = JSON.parse(raw) as Partial<PersistedHealthState>
     if (
@@ -174,7 +551,7 @@ function loadPersistedState(): PersistedHealthState {
       !parsed.logEntries ||
       !parsed.streaks
     ) {
-      return createDefaultState()
+      return createHealthySeededState()
     }
 
     return {
@@ -183,9 +560,17 @@ function loadPersistedState(): PersistedHealthState {
       logEntries: Array.isArray(parsed.logEntries)
         ? (parsed.logEntries as HealthLogEntry[])
         : [],
+      profile:
+        parsed.profile && typeof parsed.profile === 'object'
+          ? {
+              currentAge: sanitizeCurrentAge(
+                (parsed.profile as ProfileState).currentAge,
+              ),
+            }
+          : {},
     }
   } catch {
-    return createDefaultState()
+    return createHealthySeededState()
   }
 }
 
@@ -198,6 +583,7 @@ export function HealthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<HealthContextValue>(() => {
     const allContributions = state.logEntries.flatMap((entry) => entry.contributions)
+    const replayedSnapshots = replayLogEntries(state.logEntries)
     const recentEvents = state.logEntries
       .slice(0, RECENT_ENTRY_COUNT)
       .flatMap((entry) => entry.events)
@@ -209,6 +595,31 @@ export function HealthProvider({ children }: { children: ReactNode }) {
     const latestImpactByOrgan = new Map(
       latestImpactSummary.map((impact) => [impact.organ, impact.scoreDelta]),
     )
+    const projectionCycle = buildProjectionCycle(state.logEntries)
+    const projectionAvailable =
+      sanitizeCurrentAge(state.profile.currentAge) != null &&
+      state.logEntries.length >= MIN_PROJECTION_LOG_ENTRIES &&
+      projectionCycle.length > 0
+    const currentAge = sanitizeCurrentAge(state.profile.currentAge)
+    const projectionSimulation =
+      projectionAvailable && currentAge != null
+        ? simulateToAge70({
+            currentAge,
+            organStates: state.organStates,
+            streaks: state.streaks,
+            cycle: projectionCycle,
+          })
+        : null
+    const projectionLevers =
+      projectionAvailable && currentAge != null
+        ? rankProjectionLevers({
+            currentAge,
+            organStates: state.organStates,
+            streaks: state.streaks,
+            cycle: projectionCycle,
+          })
+        : null
+    const projectionBasisLabel = buildProjectionBasisLabel(projectionCycle)
 
     const organSummaries = Object.keys(ORGAN_METADATA).reduce(
       (accumulator, organKey) => {
@@ -222,6 +633,19 @@ export function HealthProvider({ children }: { children: ReactNode }) {
           topNegative,
           topPositive,
         })
+        const trendPoints = replayedSnapshots.map((snapshot) => ({
+          id: snapshot.entryId,
+          score: snapshot.organStates[organ].score,
+          timestamp: snapshot.timestamp,
+          label: formatTimestamp(snapshot.timestamp),
+        }))
+        const trendDelta = computeTrendDelta(trendPoints)
+        const trendDirection = classifyTrend(trendDelta)
+        const primaryDrivers = summarizePrimaryDrivers(
+          organ,
+          replayedSnapshots.slice(-OVERVIEW_TREND_WINDOW),
+          trendDirection,
+        )
 
         const history = state.logEntries
           .flatMap((entry) =>
@@ -233,6 +657,27 @@ export function HealthProvider({ children }: { children: ReactNode }) {
           )
           .slice(0, 6)
 
+        const futureProjection =
+          projectionSimulation && projectionLevers
+            ? (() => {
+                const projectedScore = projectionSimulation.projectedScores[organ]
+                const copy = getProjectionCopy(organ, projectedScore)
+
+                return {
+                  available: true,
+                  projectedScore,
+                  band: formatProjectionBand(projectedScore),
+                  points: projectionSimulation.pointsByOrgan[organ],
+                  scenarioTitle: copy.scenarioTitle,
+                  scenarioBody: copy.scenarioBody,
+                  abilityBullets: copy.abilityBullets,
+                  topSupports: projectionLevers[organ].supports.slice(0, 2),
+                  topDrags: projectionLevers[organ].drags.slice(0, 2),
+                  basisLabel: projectionBasisLabel,
+                }
+              })()
+            : createUnavailableFutureProjection()
+
         accumulator[organ] = {
           name: ORGAN_METADATA[organ].name,
           score: stateForOrgan.score,
@@ -241,6 +686,13 @@ export function HealthProvider({ children }: { children: ReactNode }) {
           explanation,
           helps: ORGAN_METADATA[organ].helps,
           history,
+          trend: {
+            points: trendPoints,
+            delta: trendDelta,
+            direction: trendDirection,
+            primaryDrivers,
+          },
+          futureProjection,
         }
 
         return accumulator
@@ -309,14 +761,14 @@ export function HealthProvider({ children }: { children: ReactNode }) {
       },
     ]
 
-    return {
-      ...state,
-      overallScore,
-      statCards,
-      latestImpactNarrative,
-      latestImpactSummary,
-      organSummaries,
-      logActivities: (events: ActivityEvent[]) => {
+      return {
+        ...state,
+        overallScore,
+        statCards,
+        latestImpactNarrative,
+        latestImpactSummary,
+        organSummaries,
+        logActivities: (events: ActivityEvent[]) => {
         setState((current) => {
           const timestamp = new Date().toISOString()
           const stampedEvents = events.map((event) => ({
@@ -343,11 +795,32 @@ export function HealthProvider({ children }: { children: ReactNode }) {
             organStates: result.organStates,
             streaks: result.streaks,
             logEntries: [nextEntry, ...current.logEntries].slice(0, MAX_LOG_ENTRIES),
+            profile: current.profile,
           }
         })
       },
+      loadHealthyDemoYear: () => {
+        setState(createHealthySeededState())
+      },
+      loadModerateDemoYear: () => {
+        setState(createModerateSeededState())
+      },
+      loadUnhealthyDemoYear: () => {
+        setState(createUnhealthySeededState())
+      },
+      setCurrentAge: (age?: number) => {
+        setState((current) => ({
+          ...current,
+          profile: {
+            currentAge: sanitizeCurrentAge(age),
+          },
+        }))
+      },
       resetHealthState: () => {
-        setState(createDefaultState())
+        setState((current) => ({
+          ...createEmptyState(),
+          profile: current.profile,
+        }))
       },
     }
   }, [state])

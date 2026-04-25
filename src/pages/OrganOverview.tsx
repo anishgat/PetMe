@@ -1,9 +1,13 @@
 import { Link } from 'react-router-dom'
+import OrganTrendSparkline from '../components/OrganTrendSparkline'
 import PageTitle from '../components/PageTitle'
 import ProgressBar from '../components/ProgressBar'
-import { useHealth } from '../features/health/HealthContext'
+import { formatProjectionBand } from '../features/health'
+import { useHealth, type OrganTrendDirection } from '../features/health/HealthContext'
 import type { BodySystemKey } from '../features/insights/insightService'
 import { FUTURE_SELF_SYSTEM_GROUPS } from '../features/messages/futureSelfMessageService'
+
+const MIN_TREND_POINTS = 3
 
 type SystemPresentation = {
   eyebrow: string
@@ -77,6 +81,81 @@ function getDeltaTone(delta: number) {
   return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200'
 }
 
+function getTrendLabel(direction: OrganTrendDirection) {
+  if (direction === 'improving') {
+    return 'Improving'
+  }
+
+  if (direction === 'strained') {
+    return 'Under strain'
+  }
+
+  return 'Flat'
+}
+
+function getTrendTone(direction: OrganTrendDirection) {
+  if (direction === 'improving') {
+    return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
+  }
+
+  if (direction === 'strained') {
+    return 'bg-rose-50 text-rose-700 ring-1 ring-rose-100'
+  }
+
+  return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200'
+}
+
+function formatTrendDelta(delta: number) {
+  const rounded = Math.round(delta * 10) / 10
+  return `${rounded > 0 ? '+' : ''}${rounded.toFixed(1)} pts`
+}
+
+function getProjectionTone(label: string) {
+  if (label === 'Strong runway') {
+    return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
+  }
+
+  if (label === 'Capable but watchful') {
+    return 'bg-sky-50 text-sky-700 ring-1 ring-sky-100'
+  }
+
+  if (label === 'Narrowing comfort') {
+    return 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'
+  }
+
+  return 'bg-rose-50 text-rose-700 ring-1 ring-rose-100'
+}
+
+function shortenExplanation(explanation: string) {
+  const [firstSentence] = explanation
+    .split('.')
+    .map((fragment) => fragment.trim())
+    .filter(Boolean)
+
+  return firstSentence ? `${firstSentence}.` : explanation
+}
+
+function buildDriverSummary(
+  direction: OrganTrendDirection,
+  drivers: string[],
+) {
+  if (drivers.length === 0) {
+    return 'Trend is still settling. Add a few more check-ins to see what consistently moves this organ.'
+  }
+
+  const joinedDrivers = drivers.join(' + ')
+
+  if (direction === 'improving') {
+    return `Mostly helped by ${joinedDrivers}.`
+  }
+
+  if (direction === 'strained') {
+    return `Mostly strained by ${joinedDrivers}.`
+  }
+
+  return `Most active drivers: ${joinedDrivers}.`
+}
+
 function getSystemIcon(systemId: BodySystemKey) {
   switch (systemId) {
     case 'cardio':
@@ -146,7 +225,8 @@ function getSystemIcon(systemId: BodySystemKey) {
 }
 
 export default function OrganOverview() {
-  const { organSummaries, overallScore } = useHealth()
+  const { organSummaries, overallScore, profile, logEntries } = useHealth()
+  const projectionReady = profile.currentAge != null && logEntries.length >= 7
 
   const systemCards = FUTURE_SELF_SYSTEM_GROUPS.map((system) => {
     const organs = system.organs.map((organ) => ({
@@ -156,6 +236,11 @@ export default function OrganOverview() {
     const score =
       organs.reduce((sum, organ) => sum + organ.score, 0) / Math.max(organs.length, 1)
     const latestDelta = organs.reduce((sum, organ) => sum + organ.latestDelta, 0)
+    const projectedAge70Score =
+      organs.every((organ) => organ.futureProjection.available)
+        ? organs.reduce((sum, organ) => sum + organ.futureProjection.projectedScore, 0) /
+          Math.max(organs.length, 1)
+        : null
 
     return {
       ...system,
@@ -163,6 +248,9 @@ export default function OrganOverview() {
       score,
       progress: score / 100,
       latestDelta,
+      projectedAge70Score,
+      projectedAge70Band:
+        projectedAge70Score != null ? formatProjectionBand(projectedAge70Score) : null,
       strongestOrgan: [...organs].sort((left, right) => right.score - left.score)[0] ?? null,
     }
   })
@@ -281,6 +369,15 @@ export default function OrganOverview() {
                   >
                     {getDeltaLabel(system.latestDelta)}
                   </span>
+                  {system.projectedAge70Band ? (
+                    <span
+                      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getProjectionTone(
+                        system.projectedAge70Band,
+                      )}`}
+                    >
+                      Age 70: {system.projectedAge70Band}
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
@@ -309,8 +406,8 @@ export default function OrganOverview() {
                             <p className="text-sm font-semibold text-slate-900">
                               {organ.name}
                             </p>
-                            <p className="mt-1 text-sm text-slate-500">
-                              {organ.explanation}
+                            <p className="mt-1 text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                              Current organ score
                             </p>
                           </div>
                           <div className="text-right">
@@ -318,11 +415,11 @@ export default function OrganOverview() {
                               {Math.round(organ.score)}%
                             </p>
                             <span
-                              className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[0.68rem] font-semibold ${getDeltaTone(
-                                organ.latestDelta,
+                              className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[0.68rem] font-semibold ${getTrendTone(
+                                organ.trend.direction,
                               )}`}
                             >
-                              {getDeltaLabel(organ.latestDelta)}
+                              {getTrendLabel(organ.trend.direction)}
                             </span>
                           </div>
                         </div>
@@ -332,6 +429,76 @@ export default function OrganOverview() {
                             trackClassName="h-2 bg-slate-100"
                             barClassName={presentation.bar}
                           />
+                        </div>
+                        <div className="mt-4 flex items-center justify-between gap-3 rounded-[1.1rem] border border-slate-200 bg-slate-50/80 px-3 py-3">
+                          <div>
+                            <p className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                              Age-70 outlook
+                            </p>
+                            <p className="mt-1 text-sm text-slate-600">
+                              {organ.futureProjection.available
+                                ? `Projected score ${Math.round(organ.futureProjection.projectedScore)}%.`
+                                : projectionReady
+                                  ? 'Still preparing your forecast.'
+                                  : 'Add age and enough check-ins to unlock.'}
+                            </p>
+                          </div>
+                          {organ.futureProjection.available ? (
+                            <span
+                              className={`shrink-0 rounded-full px-3 py-1 text-[0.68rem] font-semibold ${getProjectionTone(
+                                organ.futureProjection.band,
+                              )}`}
+                            >
+                              {organ.futureProjection.band}
+                            </span>
+                          ) : (
+                            <span className="shrink-0 rounded-full bg-slate-100 px-3 py-1 text-[0.68rem] font-semibold text-slate-500">
+                              Locked
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_11.75rem]">
+                          <div className="rounded-[1.1rem] bg-slate-50/80 p-3">
+                            <p className="text-sm text-slate-600">
+                              {shortenExplanation(organ.explanation)}
+                            </p>
+                            <p className="mt-3 text-xs font-medium leading-5 text-slate-500">
+                              {buildDriverSummary(
+                                organ.trend.direction,
+                                organ.trend.primaryDrivers,
+                              )}
+                            </p>
+                          </div>
+
+                          <div className="rounded-[1.1rem] border border-slate-200 bg-slate-50/80 p-3">
+                            {organ.trend.points.length >= MIN_TREND_POINTS ? (
+                              <>
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                    Last 7 check-ins
+                                  </p>
+                                  <span className="text-xs font-semibold text-slate-700">
+                                    {formatTrendDelta(organ.trend.delta)}
+                                  </span>
+                                </div>
+                                <OrganTrendSparkline
+                                  points={organ.trend.points.slice(-7)}
+                                  direction={organ.trend.direction}
+                                  className="mt-3 h-14 w-full"
+                                  height={52}
+                                  showGrid={false}
+                                />
+                                <div className="mt-2 flex items-center justify-between text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                  <span>Earlier</span>
+                                  <span>Now</span>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="flex h-full min-h-24 items-center rounded-[0.95rem] border border-dashed border-slate-200 bg-white px-3 text-xs font-medium leading-5 text-slate-500">
+                                Need 3 check-ins before this organ gets a readable trend.
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </Link>
                     ))}
