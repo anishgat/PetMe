@@ -1,6 +1,7 @@
 export * from './model/types'
 export * from './model/organImpacts'
 export * from './model/scoring'
+export * from './model/projection'
 export * from './model/explanations'
 export * from './model/impactSummary'
 export * from './llm/prompts'
